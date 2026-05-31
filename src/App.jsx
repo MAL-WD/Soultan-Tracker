@@ -80,7 +80,7 @@ const buildDefault = () => {
 // CLOUD STORAGE
 // ============================================
 
-const API_URL = import.meta.env.VITE_API_URL || "https://soultan-tracker.onrender.com/api";
+const API_URL = import.meta.env.VITE_API_URL || "https://soultan-tracker-1.onrender.com";
 
 const cloudStorage = {
   get: async (key) => {
