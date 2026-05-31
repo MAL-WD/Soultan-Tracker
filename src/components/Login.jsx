@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { G } from "../constants/designTokens";
+import logoImg from '../assets/logo.png';
 
 export default function Login({ onLogin, apiUrl }) {
   const [user, setU] = useState("");
@@ -54,7 +55,7 @@ export default function Login({ onLogin, apiUrl }) {
           boxShadow: `0 12px 32px ${G.gold}44`,
           overflow: "hidden"
         }}>
-          <img src="/src/assets/logo.png" alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          <img src={logoImg} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </div>
 
         <div className="h1" style={{ marginBottom: 12, fontSize: 38, background: `linear-gradient(90deg, #fff, ${G.goldBright})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>مرحباً بك</div>

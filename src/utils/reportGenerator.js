@@ -1,21 +1,10 @@
 import { BRANCHES, DAYS, SM_TASKS_BY_TYPE, DAY_CONTENT_TYPES, STORIES_COUNT, VISUAL_CHECKS } from "../constants/designTokens";
 
 // ============================================================
-// LOGO LOADER — converts local PNG to base64 for report embed
+// LOGO PATH
 // ============================================================
-async function getLogoBase64() {
-  try {
-    const resp = await fetch("/src/assets/logo.png");
-    const blob = await resp.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
+import logoImg from '../assets/logo.png';
+const LOGO_PATH = logoImg;
 
 // ============================================================
 // SHARED STYLES
@@ -255,13 +244,11 @@ function getSharedStyles() {
 // ============================================================
 // HEADER HTML
 // ============================================================
-function headerHTML(logoSrc, reportTypeLabel) {
+function headerHTML(reportTypeLabel) {
   const date = new Date().toLocaleDateString("ar-DZ", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const time = new Date().toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit" });
 
-  const logoEl = logoSrc
-    ? `<div class="header-logo"><img src="${logoSrc}" alt="Soultan Logo" /></div>`
-    : `<div class="header-logo"><span class="header-logo-placeholder">♛</span></div>`;
+  const logoEl = `<div class="header-logo"><img src="${LOGO_PATH}" onerror="this.onerror=null; this.src='/logo.png';" alt="Soultan Logo" /></div>`;
 
   return `
     <div class="report-header">
@@ -296,18 +283,24 @@ function footerHTML() {
 }
 
 // ============================================================
-// OPEN REPORT WINDOW
+// OPEN & RENDER REPORT WINDOW (FULLY SYNCHRONOUS & POPUP SAFE)
 // ============================================================
-function openReport(htmlBody, title = "تقرير مكتبة السلطان") {
+function renderReport(title, htmlBody) {
   const w = window.open("", "_blank");
-  if (!w) { alert("يرجى السماح بفتح النوافذ المنبثقة"); return; }
-  w.document.write(`<!DOCTYPE html>
+  if (!w) {
+    alert("يرجى السماح بفتح النوافذ المنبثقة (Pop-ups) لتوليد التقرير");
+    return;
+  }
+  
+  const fullHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>${title}</title>
-  <style>${getSharedStyles()}</style>
+  <style>
+    ${getSharedStyles()}
+  </style>
 </head>
 <body>
   <div class="page">
@@ -316,11 +309,16 @@ function openReport(htmlBody, title = "تقرير مكتبة السلطان") {
   </div>
   <script>
     window.onload = function() {
-      setTimeout(() => window.print(), 600);
+      setTimeout(function() {
+        window.print();
+      }, 500);
     };
   </script>
 </body>
-</html>`);
+</html>`;
+
+  w.document.open();
+  w.document.write(fullHtml);
   w.document.close();
 }
 
@@ -355,8 +353,10 @@ function barStyle(pct) {
 // ============================================================
 // ① TASKS REPORT
 // ============================================================
-export async function generateTasksReport(data, branchId, dayEn, branchNames, activeBranch) {
-  const logoSrc = await getLogoBase64();
+export function generateTasksReport(data, branchId, dayEn, branchNames, activeBranch) {
+  const dayName     = DAYS.find(d => d.en === dayEn)?.ar || dayEn;
+  const branchName  = branchNames[branchId] || branchId;
+
   const dd      = data[branchId]?.[dayEn] || {};
   const types   = DAY_CONTENT_TYPES[dayEn] || [];
   const allTasks = types.flatMap(type =>
@@ -368,8 +368,6 @@ export async function generateTasksReport(data, branchId, dayEn, branchNames, ac
   const total       = allTasks.length + (hasStories ? STORIES_COUNT : 0);
   const done        = tasksDone + (hasStories ? storiesDone : 0);
   const pct         = total > 0 ? Math.round((done / total) * 100) : 0;
-  const dayName     = DAYS.find(d => d.en === dayEn)?.ar || dayEn;
-  const branchName  = branchNames[branchId] || branchId;
 
   const cats = [...new Set(allTasks.map(t => t.cat))];
 
@@ -415,7 +413,7 @@ export async function generateTasksReport(data, branchId, dayEn, branchNames, ac
   ` : "";
 
   const body = `
-    ${headerHTML(logoSrc, `📋 تقرير مهام اليوم`)}
+    ${headerHTML(`📋 تقرير مهام اليوم`)}
 
     <!-- KPI CARDS -->
     <div class="stats-grid" style="margin-bottom:20px">
@@ -489,17 +487,17 @@ export async function generateTasksReport(data, branchId, dayEn, branchNames, ac
     ${noteHTML}
   `;
 
-  openReport(body, `تقرير مهام ${dayName} — ${branchName}`);
+  renderReport(`تقرير مهام ${dayName} — ${branchName}`, body);
 }
 
 // ============================================================
 // ② VISUAL IDENTITY REPORT
 // ============================================================
-export async function generateVisualReport(data, branchId, dayEn, branchNames) {
-  const logoSrc  = await getLogoBase64();
-  const dd       = data[branchId]?.[dayEn] || {};
+export function generateVisualReport(data, branchId, dayEn, branchNames) {
   const dayName  = DAYS.find(d => d.en === dayEn)?.ar || dayEn;
   const branchName = branchNames[branchId] || branchId;
+
+  const dd       = data[branchId]?.[dayEn] || {};
   const doneCount  = VISUAL_CHECKS.filter(item => dd.visual?.[item.id]).length;
   const pct        = Math.round((doneCount / VISUAL_CHECKS.length) * 100);
 
@@ -523,7 +521,7 @@ export async function generateVisualReport(data, branchId, dayEn, branchNames) {
   ];
 
   const body = `
-    ${headerHTML(logoSrc, "🎨 تقرير الهوية البصرية")}
+    ${headerHTML("🎨 تقرير الهوية البصرية")}
 
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card">
@@ -578,15 +576,13 @@ export async function generateVisualReport(data, branchId, dayEn, branchNames) {
     </div>
   `;
 
-  openReport(body, `تقرير الهوية البصرية — ${branchName} · ${dayName}`);
+  renderReport(`تقرير الهوية البصرية — ${branchName} · ${dayName}`, body);
 }
 
 // ============================================================
 // ③ MONTHLY PLAN REPORT
 // ============================================================
-export async function generateMonthReport(monthPlan, branchNames) {
-  const logoSrc = await getLogoBase64();
-
+export function generateMonthReport(monthPlan, branchNames) {
   const activeSegs = (monthPlan.segments || []).filter(s => s.active);
   const inactiveSegs = (monthPlan.segments || []).filter(s => !s.active);
 
@@ -618,7 +614,7 @@ export async function generateMonthReport(monthPlan, branchNames) {
   ];
 
   const body = `
-    ${headerHTML(logoSrc, "📆 التقرير الشهري التسويقي")}
+    ${headerHTML("📆 التقرير الشهري التسويقي")}
 
     <!-- GOALS -->
     <div class="section">
@@ -683,14 +679,13 @@ export async function generateMonthReport(monthPlan, branchNames) {
     </div>
   `;
 
-  openReport(body, "التقرير الشهري التسويقي — مكتبة السلطان");
+  renderReport("التقرير الشهري التسويقي — مكتبة السلطان", body);
 }
 
 // ============================================================
 // ④ B2B REPORT
 // ============================================================
-export async function generateB2BReport(b2bTasks) {
-  const logoSrc   = await getLogoBase64();
+export function generateB2BReport(b2bTasks) {
   const doneCount = b2bTasks.filter(t => t.done).length;
   const pct       = b2bTasks.length > 0 ? Math.round((doneCount / b2bTasks.length) * 100) : 0;
   const cats      = [...new Set(b2bTasks.map(t => t.cat))];
@@ -722,7 +717,7 @@ export async function generateB2BReport(b2bTasks) {
   }).join("");
 
   const body = `
-    ${headerHTML(logoSrc, "🏢 تقرير مهام B2B")}
+    ${headerHTML("🏢 تقرير مهام B2B")}
 
     <div class="stats-grid" style="margin-bottom:20px">
       <div class="stat-card">
@@ -768,15 +763,13 @@ export async function generateB2BReport(b2bTasks) {
     </div>
   `;
 
-  openReport(body, "تقرير مهام B2B — مكتبة السلطان");
+  renderReport("تقرير مهام B2B — مكتبة السلطان", body);
 }
 
 // ============================================================
 // ⑤ ANALYTICS / DASHBOARD REPORT
 // ============================================================
-export async function generateDashboardReport(data, branchNames, activities) {
-  const logoSrc = await getLogoBase64();
-
+export function generateDashboardReport(data, branchNames, activities) {
   const byBranch = {};
   BRANCHES.forEach(b => {
     const scores = DAYS.map(d => getDayPct(data, b.id, d.en));
@@ -849,7 +842,7 @@ export async function generateDashboardReport(data, branchNames, activities) {
   `).join("");
 
   const body = `
-    ${headerHTML(logoSrc, "📊 تقرير التحليلات والأداء")}
+    ${headerHTML("📊 تقرير التحليلات والأداء")}
 
     <!-- OVERVIEW STATS -->
     <div class="stats-grid" style="margin-bottom:20px">
@@ -931,15 +924,13 @@ export async function generateDashboardReport(data, branchNames, activities) {
     </div>
   `;
 
-  openReport(body, "تقرير التحليلات والأداء — مكتبة السلطان");
+  renderReport("تقرير التحليلات والأداء — مكتبة السلطان", body);
 }
 
 // ============================================================
 // ⑥ FULL COMPREHENSIVE REPORT (all sections)
 // ============================================================
-export async function generateFullReport(data, branchNames, monthPlan, b2bTasks, activities) {
-  const logoSrc = await getLogoBase64();
-
+export function generateFullReport(data, branchNames, monthPlan, b2bTasks, activities) {
   // ── Analytics ──
   const byBranch = {};
   BRANCHES.forEach(b => {
@@ -971,7 +962,7 @@ export async function generateFullReport(data, branchNames, monthPlan, b2bTasks,
   const b2bPct  = b2bTasks.length > 0 ? Math.round((b2bDone / b2bTasks.length) * 100) : 0;
 
   const body = `
-    ${headerHTML(logoSrc, "📊 التقرير الشامل الأسبوعي")}
+    ${headerHTML("📊 التقرير الشامل الأسبوعي")}
 
     <!-- TOP KPIs -->
     <div class="stats-grid" style="margin-bottom:24px">
@@ -1094,5 +1085,5 @@ export async function generateFullReport(data, branchNames, monthPlan, b2bTasks,
     </div>
   `;
 
-  openReport(body, "التقرير الشامل الأسبوعي — مكتبة السلطان");
+  renderReport("التقرير الشامل الأسبوعي — مكتبة السلطان", body);
 }

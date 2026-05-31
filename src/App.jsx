@@ -15,6 +15,7 @@ import {
   generateDashboardReport,
   generateFullReport,
 } from "./utils/reportGenerator";
+import logoImg from './assets/logo.png';
 
 // ============================================
 // UTILITIES
@@ -79,7 +80,7 @@ const buildDefault = () => {
 // CLOUD STORAGE
 // ============================================
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "https://soultan-tracker.onrender.com/api";
 
 const cloudStorage = {
   get: async (key) => {
@@ -339,17 +340,6 @@ export default function SoultanProV5() {
   return (
     <>
       <style>{`
-        @font-face {
-          font-family: 'ThmanyahDisplay';
-          src: url('/src/assets/fonts/thmanyahserifdisplay-Black.otf') format('opentype');
-          font-weight: 900;
-        }
-        @font-face {
-          font-family: 'ThmanyahText';
-          src: url('/src/assets/fonts/thmanyahseriftext-Regular.otf') format('opentype');
-          font-weight: 400;
-        }
-
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: 'ThmanyahText', 'Cairo', sans-serif; background: ${G.bg}; }
 
@@ -397,7 +387,7 @@ export default function SoultanProV5() {
                   display: "flex", alignItems: "center", justifyContent: "center",
                   overflow: "hidden",
                 }}>
-                  <img src="/src/assets/logo.png" alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                  <img src={logoImg} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 </div>
                 {saving && (
                   <div style={{
