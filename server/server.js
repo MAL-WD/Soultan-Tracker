@@ -3,14 +3,23 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' ? (process.env.FRONTEND_URL || '*') : '*',
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Configuration
 const JWT_SECRET = process.env.JWT_SECRET || 'soltan-secret-key-2026';
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.warn('⚠️ WARNING: JWT_SECRET environment variable is not set in production. Falling back to default secret, which is a major security risk!');
+}
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/soltan-tracker';
 
@@ -110,6 +119,23 @@ const User = mongoose.model('User', UserSchema);
 const Data = mongoose.model('Data', DataSchema);
 const Activity = mongoose.model('Activity', ActivitySchema);
 
+const GlobalConstantSchema = new mongoose.Schema({
+  key: { 
+    type: String, 
+    required: [true, 'Key is required'], 
+    unique: true 
+  },
+  value: { 
+    type: mongoose.Schema.Types.Mixed, 
+    required: [true, 'Value is required'] 
+  },
+  updatedAt: { 
+    type: Date, 
+    default: Date.now 
+  }
+});
+const GlobalConstant = mongoose.model('GlobalConstant', GlobalConstantSchema);
+
 // ============================================
 // MIDDLEWARE
 // ============================================
@@ -165,6 +191,12 @@ const errorHandler = (err, req, res, next) => {
 // ============================================
 // AUTHENTICATION ROUTES
 // ============================================
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 login requests per window
+  message: { success: false, error: 'Too many login attempts, please try again after 15 minutes' }
+});
 
 app.post('/api/auth/register', validateInputs, async (req, res, next) => {
   try {
@@ -227,7 +259,7 @@ app.post('/api/auth/register', validateInputs, async (req, res, next) => {
   }
 });
 
-app.post('/api/auth/login', validateInputs, async (req, res, next) => {
+app.post('/api/auth/login', [validateInputs, loginLimiter], async (req, res, next) => {
   try {
     const { username, password } = req.body;
 
@@ -409,6 +441,62 @@ app.delete('/api/users/:id', [auth, adminOnly], async (req, res, next) => {
 });
 
 // ============================================
+// GLOBAL CONSTANTS ROUTES
+// ============================================
+
+// GET all global constants (Protected, accessible to all authenticated users)
+app.get('/api/global-constants', auth, async (req, res, next) => {
+  try {
+    const constants = await GlobalConstant.find();
+    const formatted = {};
+    constants.forEach(c => {
+      formatted[c.key] = c.value;
+    });
+    res.json({
+      success: true,
+      data: formatted
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// CREATE or UPDATE a global constant (Protected, Admin-only)
+app.post('/api/global-constants', [auth, adminOnly], async (req, res, next) => {
+  try {
+    const { key, value } = req.body;
+
+    if (!key || value === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Key and value are required.'
+      });
+    }
+
+    const item = await GlobalConstant.findOneAndUpdate(
+      { key },
+      { value, updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    // Log admin activity
+    await Activity.create({
+      userId: req.user.id,
+      action: 'update',
+      details: `Admin updated global constant: ${key}`
+    });
+
+    res.json({
+      success: true,
+      message: 'Global constant updated successfully.',
+      data: item
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================
 // STORAGE ROUTES (Protected)
 // ============================================
 
@@ -562,6 +650,7 @@ mongoose.connect(MONGODB_URI, {
 // Database initialization
 const initializeDatabase = async () => {
   try {
+    // 1. Seed Admin User
     const adminExists = await User.findOne({ role: 'admin' });
     if (!adminExists) {
       const username = process.env.ADMIN_USERNAME || 'admin';
@@ -569,21 +658,76 @@ const initializeDatabase = async () => {
       
       if (!password && process.env.NODE_ENV === 'production') {
         console.log('⚠️ Warning: No admin user exists in production, and ADMIN_PASSWORD environment variable is not defined. Skipping auto-seeding for security.');
-        return;
+      } else {
+        const seedPassword = password || 'admin123';
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(seedPassword, salt);
+        
+        await User.create({
+          username,
+          password: hashedPassword,
+          role: 'admin',
+          branchId: '400'
+        });
+        
+        console.log(`✅ Admin user seeded: username=${username}, password=${password ? '********' : 'admin123 (Default)'}`);
       }
-      
-      const seedPassword = password || 'admin123';
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(seedPassword, salt);
-      
-      await User.create({
-        username,
-        password: hashedPassword,
-        role: 'admin',
-        branchId: '400'
+    }
+
+    // 2. Seed Default Global Constants
+    const dayContentTypesExists = await GlobalConstant.findOne({ key: 'DAY_CONTENT_TYPES' });
+    if (!dayContentTypesExists) {
+      await GlobalConstant.create({
+        key: 'DAY_CONTENT_TYPES',
+        value: {
+          SAT: ["carousel"],
+          SUN: ["video"],
+          MON: ["photo", "carousel"],
+          TUE: ["video"],
+          WED: ["carousel"],
+          THU: ["video"],
+          FRI: ["video", "video"],
+        }
       });
-      
-      console.log(`✅ Admin user seeded: username=${username}, password=${password ? '********' : 'admin123 (Default)'}`);
+      console.log('✅ Global constant DAY_CONTENT_TYPES seeded.');
+    }
+
+    const smTasksByTypeExists = await GlobalConstant.findOne({ key: 'SM_TASKS_BY_TYPE' });
+    if (!smTasksByTypeExists) {
+      await GlobalConstant.create({
+        key: 'SM_TASKS_BY_TYPE',
+        value: {
+          carousel: [
+            { id: "research", label: "بحث الموضوع",  icon: "🔍", cat: "تحضير"  },
+            { id: "script",   label: "السكريبت",      icon: "✍️", cat: "تحضير"  },
+            { id: "design",   label: "التصميم",        icon: "🎨", cat: "إنتاج"  },
+            { id: "caption",  label: "الكابشن",        icon: "📝", cat: "إنتاج"  },
+            { id: "hashtags", label: "الهاشتاقات",    icon: "#️⃣", cat: "إنتاج"  },
+            { id: "review",   label: "المراجعة",       icon: "✅", cat: "مراجعة" },
+            { id: "publish",  label: "النشر",          icon: "📤", cat: "نشر"    },
+            { id: "engage",   label: "التفاعل",        icon: "💬", cat: "تفاعل"  },
+          ],
+          video: [
+            { id: "concept", label: "الفكرة",    icon: "💡", cat: "تحضير"  },
+            { id: "script",  label: "السكريبت", icon: "✍️", cat: "تحضير"  },
+            { id: "filming", label: "التصوير",   icon: "🎬", cat: "إنتاج"  },
+            { id: "edit",    label: "المونتاج",  icon: "✂️", cat: "إنتاج"  },
+            { id: "caption", label: "الكابشن",  icon: "📝", cat: "إنتاج"  },
+            { id: "review",  label: "المراجعة", icon: "✅", cat: "مراجعة" },
+            { id: "publish", label: "النشر",     icon: "📤", cat: "نشر"    },
+            { id: "engage",  label: "التفاعل",  icon: "💬", cat: "تفاعل"  },
+          ],
+          photo: [
+            { id: "concept",  label: "الاختيار",   icon: "🎯", cat: "تحضير"  },
+            { id: "design",   label: "التصميم",    icon: "🎨", cat: "إنتاج"  },
+            { id: "caption",  label: "الكابشن",    icon: "📝", cat: "إنتاج"  },
+            { id: "hashtags", label: "الهاشتاقات", icon: "#️⃣", cat: "إنتاج"  },
+            { id: "review",   label: "المراجعة",   icon: "✅", cat: "مراجعة" },
+            { id: "publish",  label: "النشر",      icon: "📤", cat: "نشر"    },
+          ],
+        }
+      });
+      console.log('✅ Global constant SM_TASKS_BY_TYPE seeded.');
     }
   } catch (err) {
     console.error('❌ Database initialization error:', err.message);
