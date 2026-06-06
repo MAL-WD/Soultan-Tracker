@@ -66,6 +66,7 @@ const buildDefault = () => {
       });
       s[b.id][d.en] = {
         tasks,
+        subject:   "",
         stories:   Array(STORIES_COUNT).fill(false),
         visual:    {},
         note:      "",
@@ -76,11 +77,65 @@ const buildDefault = () => {
   return s;
 };
 
+const mergeDefault = (loadedData) => {
+  const defaults = buildDefault();
+  if (!loadedData) return defaults;
+  
+  const merged = { ...defaults };
+  Object.keys(defaults).forEach(branchId => {
+    if (!loadedData[branchId]) {
+      loadedData[branchId] = {};
+    }
+    merged[branchId] = { ...defaults[branchId] };
+    Object.keys(defaults[branchId]).forEach(dayEn => {
+      const defaultDay = defaults[branchId][dayEn];
+      const loadedDay = loadedData[branchId][dayEn] || {};
+      
+      merged[branchId][dayEn] = {
+        ...defaultDay,
+        ...loadedDay,
+        tasks: {
+          ...defaultDay.tasks,
+          ...(loadedDay.tasks || {})
+        },
+        stories: loadedDay.stories || defaultDay.stories,
+        visual: {
+          ...defaultDay.visual,
+          ...(loadedDay.visual || {})
+        }
+      };
+    });
+  });
+  return merged;
+};
+
+const mergeMonthPlan = (loaded) => {
+  if (!loaded) return MONTHS_PLAN_DEFAULT;
+  return {
+    ...MONTHS_PLAN_DEFAULT,
+    ...loaded,
+    goals: {
+      ...MONTHS_PLAN_DEFAULT.goals,
+      ...(loaded.goals || {})
+    },
+    segments: loaded.segments || MONTHS_PLAN_DEFAULT.segments,
+    weeks: (loaded.weeks || MONTHS_PLAN_DEFAULT.weeks).map((w, i) => ({
+      ...(MONTHS_PLAN_DEFAULT.weeks[i] || {}),
+      ...w,
+      contentTypes: w.contentTypes || []
+    })),
+    funnel: {
+      ...MONTHS_PLAN_DEFAULT.funnel,
+      ...(loaded.funnel || {})
+    }
+  };
+};
+
 // ============================================
 // CLOUD STORAGE
 // ============================================
 
-const API_URL = import.meta.env.VITE_API_URL || "https://soultan-tracker-1.onrender.com";
+const API_URL = import.meta.env.VITE_API_URL || "https://soultan-tracker-1.onrender.com/api";
 
 const cloudStorage = {
   get: async (key) => {
@@ -132,6 +187,13 @@ export default function SoultanProV5() {
   const [activities,  setActivities]  = useState([]);
   const [comments,    setComments]    = useState({});
   const [notifications, setNotifications] = useState([]);
+  const [dayContentTypes, setDayContentTypes] = useState(DAY_CONTENT_TYPES);
+  const [smTasksByType,    setSmTasksByType]    = useState(SM_TASKS_BY_TYPE);
+  const [contentTypeMetadata, setContentTypeMetadata] = useState({
+    carousel: { name: "كراوسل", icon: "🎠", color: G.gold },
+    video: { name: "فيديو", icon: "🎬", color: G.accentLak },
+    photo: { name: "صورة", icon: "🖼️", color: G.accentBid }
+  });
   const wk = getWk();
 
   // ============================================
@@ -166,28 +228,82 @@ export default function SoultanProV5() {
     sv(undefined, undefined, undefined, undefined, updated);
   };
 
-  // Load data on mount
+  // Auto-login on mount
   useEffect(() => {
     (async () => {
+      const token = localStorage.getItem("token");
+      if (token) {
+        try {
+          const res = await fetch(`${API_URL}/auth/me`, {
+            headers: { "x-auth-token": token }
+          });
+          const d = await res.json();
+          if (d.success && d.user) {
+            setCurrentUser(d.user);
+            if (d.user.branchId) setBranch(d.user.branchId);
+            return;
+          } else {
+            localStorage.removeItem("token");
+          }
+        } catch {}
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  // Load data when user logs in
+  useEffect(() => {
+    if (!currentUser) return;
+
+    setLoaded(false);
+    (async () => {
       try {
-        const r  = await cloudStorage.get(wk);          if (r?.value)  setData(JSON.parse(r.value));
-        const m  = await cloudStorage.get(`${wk}-mp`);  if (m?.value)  setMonthPlan(JSON.parse(m.value));
+        const r  = await cloudStorage.get(wk);          if (r?.value)  setData(mergeDefault(JSON.parse(r.value)));
+        const m  = await cloudStorage.get(`${wk}-mp`);  if (m?.value)  setMonthPlan(mergeMonthPlan(JSON.parse(m.value)));
         const b  = await cloudStorage.get(`${wk}-b2b`); if (b?.value)  setB2bTasks(JSON.parse(b.value));
         const bn = await cloudStorage.get("bn5");        if (bn?.value) setBranchNames(JSON.parse(bn.value));
         const ac = await cloudStorage.get(`${wk}-act`); if (ac?.value) setActivities(JSON.parse(ac.value));
         const cm = await cloudStorage.get(`${wk}-com`); if (cm?.value) setComments(JSON.parse(cm.value));
       } catch {}
+
+      // Load dynamic global constants with fallback
+      try {
+        const token = localStorage.getItem("token");
+        const gcRes = await fetch(`${API_URL}/global-constants`, {
+          headers: { "x-auth-token": token }
+        });
+        if (gcRes.status === 404) {
+          throw new Error("404");
+        }
+        const gcData = await gcRes.json();
+        if (gcData.success && gcData.data) {
+          if (gcData.data.DAY_CONTENT_TYPES) setDayContentTypes(gcData.data.DAY_CONTENT_TYPES);
+          if (gcData.data.SM_TASKS_BY_TYPE)  setSmTasksByType(gcData.data.SM_TASKS_BY_TYPE);
+        } else {
+          throw new Error("Not success");
+        }
+      } catch (e) {
+        // Fallback to cloudStorage
+        try {
+          const fallbackDCT = await cloudStorage.get("DAY_CONTENT_TYPES");
+          if (fallbackDCT?.value) setDayContentTypes(JSON.parse(fallbackDCT.value));
+          
+          const fallbackSMT = await cloudStorage.get("SM_TASKS_BY_TYPE");
+          if (fallbackSMT?.value) setSmTasksByType(JSON.parse(fallbackSMT.value));
+        } catch {}
+      }
+
       setLoaded(true);
       setTimeout(() => setAnimate(true), 80);
     })();
-  }, []);
+  }, [currentUser]);
 
   // ============================================
   // STATE HANDLERS (passed to child components)
   // ============================================
 
-  const types    = DAY_CONTENT_TYPES[day] || [];
-  const allTasks = types.flatMap(type => (SM_TASKS_BY_TYPE[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type })));
+  const types    = dayContentTypes[day] || [];
+  const allTasks = types.flatMap(type => (smTasksByType[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type })));
 
   const toggleTask = (key) => {
     const dd = data[branch][day];
@@ -219,6 +335,11 @@ export default function SoultanProV5() {
 
   const setNote = (v) => {
     const u = { ...data, [branch]: { ...data[branch], [day]: { ...data[branch][day], note: v } } };
+    setData(u); sv(u);
+  };
+
+  const setSubject = (v) => {
+    const u = { ...data, [branch]: { ...data[branch], [day]: { ...data[branch][day], subject: v } } };
     setData(u); sv(u);
   };
 
@@ -276,8 +397,8 @@ export default function SoultanProV5() {
 
   const getDayPct = (bid, den) => {
     const dd    = data[bid]?.[den] || {};
-    const dTypes = DAY_CONTENT_TYPES[den] || [];
-    const all   = dTypes.flatMap(t => (SM_TASKS_BY_TYPE[t] || []).map(x => ({ key: `${t}_${x.id}` })));
+    const dTypes = dayContentTypes[den] || [];
+    const all   = dTypes.flatMap(t => (smTasksByType[t] || []).map(x => ({ key: `${t}_${x.id}` })));
     const hasStories = den !== "FRI";
     const done  = all.filter(t => dd.tasks?.[t.key]).length + (hasStories ? (dd.stories || []).filter(Boolean).length : 0);
     const total = all.length + (hasStories ? STORIES_COUNT : 0);
@@ -332,8 +453,53 @@ export default function SoultanProV5() {
   // ============================================
 
   if (!loaded) return (
-    <div style={{ background: G.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
-      <div style={{ fontSize: 40, animation: "spin 2s linear infinite" }}>♛</div>
+    <div style={{ 
+      background: `radial-gradient(circle at center, ${G.panel}, ${G.bg})`, 
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 24,
+      position: "relative", overflow: "hidden"
+    }}>
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .4 } }
+        @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+        @keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+      `}</style>
+      
+      {/* Decorative Orbs */}
+      <div style={{ position: "absolute", top: "20%", right: "20%", width: 200, height: 200, background: G.gold, filter: "blur(100px)", opacity: 0.1, borderRadius: "50%" }} />
+      <div style={{ position: "absolute", bottom: "20%", left: "20%", width: 200, height: 200, background: G.green, filter: "blur(100px)", opacity: 0.08, borderRadius: "50%" }} />
+      
+      <div style={{
+        width: 80, height: 80, borderRadius: 20,
+        background: `linear-gradient(135deg, ${G.goldDim}, ${G.card})`,
+        border: `1px solid ${G.borderGold}44`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        boxShadow: `0 0 30px ${G.gold}22`,
+        animation: "pulse 2s infinite ease-in-out"
+      }}>
+        <div style={{ fontSize: 40, color: G.goldBright, animation: "spin 3s cubic-bezier(0.4, 0, 0.2, 1) infinite" }}>♛</div>
+      </div>
+      
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+        <div className="h3" style={{ 
+          background: `linear-gradient(90deg, #fff, ${G.goldBright})`, 
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          letterSpacing: 1
+        }}>مكتبة السلطان</div>
+        <div className="label" style={{ color: G.gold, letterSpacing: 3, animation: "pulse 1.5s infinite" }}>
+          جاري التحميل...
+        </div>
+        
+        {/* Loading Bar */}
+        <div style={{
+          width: 140, height: 3, background: `${G.gold}22`, borderRadius: 4, marginTop: 12, overflow: "hidden", position: "relative"
+        }}>
+          <div style={{
+            position: "absolute", top: 0, bottom: 0, left: 0, width: "100%",
+            background: `linear-gradient(90deg, transparent, ${G.goldBright}, transparent)`,
+            animation: "sweep 1.5s infinite linear"
+          }} />
+        </div>
+      </div>
     </div>
   );
 
@@ -378,8 +544,9 @@ export default function SoultanProV5() {
             display: "flex", alignItems: "center", justifyContent: "space-between",
             position: "sticky", top: 0, zIndex: 99,
             backdropFilter: "blur(16px)",
+            flexWrap: "wrap", gap: "12px",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "1 1 auto", minWidth: "250px" }}>
               <div style={{ position: "relative" }}>
                 <div style={{
                   width: 54, height: 54, borderRadius: 12,
@@ -406,7 +573,7 @@ export default function SoultanProV5() {
                 <div className="label" style={{ fontSize: 10, color: G.textMuted, letterSpacing: 2 }}>SOULTAN STATIONERY</div>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", flex: "1 1 auto", justifyContent: "flex-end" }}>
               <div style={{ textAlign: "left", marginRight: 10 }}>
                 <div className="body" style={{ fontWeight: 700, fontSize: 13, color: G.gold }}>{currentUser.username}</div>
                 <div className="caption" style={{ fontSize: 9 }}>{currentUser.role === 'admin' ? "مدير النظام" : "مسؤول فرع"}</div>
@@ -459,7 +626,7 @@ export default function SoultanProV5() {
           )}
 
           {/* ═══════════════ BRANCHES ═══════════════ */}
-          <div style={{ padding: "16px 16px 0", display: "flex", gap: 12 }}>
+          <div style={{ padding: "16px 16px 0", display: "flex", gap: 12, flexWrap: "wrap" }}>
             {BRANCHES.filter(b => currentUser.role === 'admin' || b.id === currentUser.branchId).map((b, bi) => {
               const wp  = getWeekPct(b.id);
               const isA = b.id === branch;
@@ -468,7 +635,7 @@ export default function SoultanProV5() {
                   key={b.id}
                   onClick={() => { setBranch(b.id); if (!["month","b2b","admin"].includes(panel)) setPanel("tasks"); }}
                   style={{
-                    flex: 1, padding: "14px 10px", borderRadius: 16, cursor: "pointer",
+                    flex: "1 1 100px", minWidth: 120, padding: "14px 10px", borderRadius: 16, cursor: "pointer",
                     border: `1px solid ${isA ? b.color : G.border}`,
                     background: isA ? `linear-gradient(135deg,${b.dim},${G.card})` : G.card,
                     boxShadow: isA ? `0 4px 20px ${b.glow}` : "none",
@@ -592,14 +759,17 @@ export default function SoultanProV5() {
                 branchNames={branchNames}
                 activeBranch={activeBranch}
                 types={types}
+                smTasksByType={smTasksByType}
                 catFilter={catFilter}
                 setCatFilter={setCatFilter}
                 toggleTask={toggleTask}
                 toggleStory={toggleStory}
                 togglePublished={togglePublished}
+                setSubject={setSubject}
                 setNote={setNote}
                 comments={comments}
                 addComment={addComment}
+                contentTypeMetadata={contentTypeMetadata}
               />
             </>
           )}
@@ -700,7 +870,17 @@ export default function SoultanProV5() {
           )}
 
           {panel === "admin" && (
-            <AdminPanel apiUrl={API_URL} currentUser={currentUser} />
+            <AdminPanel
+              apiUrl={API_URL}
+              currentUser={currentUser}
+              dayContentTypes={dayContentTypes}
+              setDayContentTypes={setDayContentTypes}
+              smTasksByType={smTasksByType}
+              setSmTasksByType={setSmTasksByType}
+              cloudStorage={cloudStorage}
+              contentTypeMetadata={contentTypeMetadata}
+              setContentTypeMetadata={setContentTypeMetadata}
+            />
           )}
 
           <div style={{ height: 24 }} />

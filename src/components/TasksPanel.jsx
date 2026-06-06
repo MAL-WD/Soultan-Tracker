@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { G, DAYS, SM_TASKS_BY_TYPE, STORIES_COUNT } from "../constants/designTokens";
+import { G, DAYS, SM_TASKS_BY_TYPE as DEFAULT_SM_TASKS, STORIES_COUNT } from "../constants/designTokens";
 
 function Ring({ pct, color, size = 44, stroke = 3 }) {
   const r    = (size - stroke * 2) / 2;
@@ -52,17 +52,20 @@ export default function TasksPanel({
   branchNames,
   activeBranch,
   types,
+  smTasksByType = DEFAULT_SM_TASKS,
   catFilter,
   setCatFilter,
   toggleTask,
   toggleStory,
   togglePublished,
+  setSubject,
   setNote,
   comments,
-  addComment
+  addComment,
+  contentTypeMetadata = {}
 }) {
   const curData = data[branch]?.[day] || {};
-  const allTasks = types.flatMap(type => (SM_TASKS_BY_TYPE[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type })));
+  const allTasks = types.flatMap(type => (smTasksByType[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type })));
   const cats = [...new Set(allTasks.map(t => t.cat))];
   const filteredTasks = catFilter === "all" ? allTasks : allTasks.filter(t => t.cat === catFilter);
   const dayDone = allTasks.filter(t => curData.tasks?.[t.key]).length;
@@ -88,9 +91,10 @@ export default function TasksPanel({
           justifyContent: "space-between",
           boxShadow: `0 12px 30px ${activeBranch.color}15`,
           gap: 16,
-          direction: "rtl"
+          direction: "rtl",
+          flexWrap: "wrap"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", flex: "1 1 auto" }}>
             <div style={{ 
               width: 60, 
               height: 60, 
@@ -104,12 +108,12 @@ export default function TasksPanel({
               boxShadow: `0 8px 24px ${activeBranch.color}33`,
               flexShrink: 0
             }}>
-              {types.includes("carousel") ? "🎠" : types.includes("video") ? "🎬" : "🖼️"}
+              {contentTypeMetadata[types[0]]?.icon || "📋"}
             </div>
             <div>
               <div className="label" style={{ color: activeBranch.color, fontSize: 11, letterSpacing: 1.5, marginBottom: 4, fontWeight: "bold" }}>نوع المحتوى المقرر لليوم</div>
-              <div className="h2" style={{ margin: 0, fontSize: 20, fontWeight: 900, color: G.text, textShadow: "0 2px 4px rgba(0,0,0,0.5)" }}>
-                {types.map(t => t === "carousel" ? "منشور كراوسل (شرائح)" : t === "video" ? "فيديو قصير (Reels / Shorts)" : "صورة فوتوغرافية فردية").join(" + ")}
+              <div className="h2" style={{ margin: 0, fontSize: "clamp(16px, 4vw, 20px)", fontWeight: 900, color: G.text, textShadow: "0 2px 4px rgba(0,0,0,0.5)" }}>
+                {types.map(t => contentTypeMetadata[t]?.name || t).join(" + ")}
               </div>
             </div>
           </div>
@@ -130,7 +134,7 @@ export default function TasksPanel({
       )}
 
       {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: "12px" }}>
         <div>
           <div className="h2" style={{ color: activeBranch.color, margin: 0 }}>
             {DAYS.find(d => d.en === day)?.ar} — {branchNames[branch]}
@@ -144,6 +148,31 @@ export default function TasksPanel({
           <Ring pct={dayPct} color={activeBranch.color} size={60} stroke={5} />
           <div className="h3" style={{ position: "absolute", color: activeBranch.color, margin: 0 }}>{dayPct}%</div>
         </div>
+      </div>
+
+      {/* Subject Input Card */}
+      <div style={{ 
+        background: G.card, 
+        border: `1px solid ${G.border}`, 
+        borderRadius: 16, 
+        padding: "16px", 
+        marginBottom: 20 
+      }}>
+        <div className="label" style={{ marginBottom: 8, fontWeight: "bold", color: activeBranch.color }}>📝 موضوع محتوى اليوم (Subject)</div>
+        <input 
+          type="text"
+          value={curData.subject || ""} 
+          onChange={e => setSubject(e.target.value)} 
+          placeholder="اكتب فكرة أو عنوان أو موضوع محتوى اليوم بالتفصيل..." 
+          style={{
+            width: "100%", background: G.panel, border: `1px solid ${G.border}`, borderRadius: 10,
+            padding: "12px 14px", fontSize: 14, outline: "none",
+            transition: "border-color .2s", fontFamily: "'ThmanyahText', sans-serif",
+            color: G.text, textAlign: "right"
+          }} 
+          onFocus={e => e.target.style.borderColor = activeBranch.color + "77"}
+          onBlur={e => e.target.style.borderColor = G.border}
+        />
       </div>
 
       {/* Category filters */}
@@ -192,12 +221,18 @@ export default function TasksPanel({
             >
               <Check done={done} color={activeBranch.color} onToggle={() => toggleTask(task.key)} />
               <span style={{ fontSize: 18 }}>{task.icon}</span>
-              <div style={{ flex: 1, textAlign: "right" }}>
-                <div className="body" style={{ fontWeight: 700, color: done ? activeBranch.color : G.text, textDecoration: done ? "line-through" : "none", margin: 0 }}>
+              <div style={{ flex: 1, textAlign: "right", minWidth: 0 }}>
+                <div className="body" style={{ 
+                  fontWeight: 700, 
+                  color: done ? activeBranch.color : G.text, 
+                  textDecoration: done ? "line-through" : "none", 
+                  margin: 0,
+                  wordBreak: "break-word"
+                }}>
                   {task.label}
                 </div>
                 <div className="caption" style={{ marginTop: 2 }}>
-                  {task.cat} · {task.type === "carousel" ? "كراوسل" : task.type === "video" ? "فيديو" : "صورة"}
+                  {task.cat} · {contentTypeMetadata[task.type]?.name || task.type}
                 </div>
               </div>
             </div>
@@ -211,7 +246,7 @@ export default function TasksPanel({
           <div style={{ fontSize: 10, color: G.textMuted, letterSpacing: 2, marginBottom: 8, textTransform: "uppercase", fontWeight: "bold" }}>
             الستوريز اليومية · {(curData.stories || []).filter(Boolean).length}/{STORIES_COUNT}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {Array.from({ length: STORIES_COUNT }).map((_, i) => {
               const done = curData.stories?.[i];
               return (
@@ -298,13 +333,17 @@ export default function TasksPanel({
             style={{ 
               flex: 1, background: G.panel, border: `1px solid ${G.border}`, 
               borderRadius: 10, padding: "10px 14px", fontSize: 14, outline: "none",
-              textAlign: "right" 
+              textAlign: "right", minWidth: 0
             }}
             onKeyDown={e => { if (e.key === "Enter") { addComment(e.target.value); e.target.value = ""; } }}
           />
           <button
             onClick={() => { const inp = document.getElementById("commentInput"); addComment(inp.value); inp.value = ""; }}
-            style={{ background: G.green, color: "#fff", border: "none", borderRadius: 10, padding: "0 20px", cursor: "pointer", fontWeight: 700, fontFamily: "'ThmanyahText', sans-serif" }}
+            style={{ 
+              background: G.green, color: "#fff", border: "none", borderRadius: 10, 
+              padding: "0 20px", cursor: "pointer", fontWeight: 700, 
+              fontFamily: "'ThmanyahText', sans-serif", flexShrink: 0 
+            }}
           >إرسال</button>
         </div>
       </div>
