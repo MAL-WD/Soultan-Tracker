@@ -68,3 +68,42 @@ self.addEventListener('fetch', event => {
       .catch(() => caches.match(request))
   );
 });
+
+// Push Notification Event
+self.addEventListener('push', event => {
+  if (event.data) {
+    const data = event.data.json();
+    const options = {
+      body: data.body || 'لديك إشعار جديد',
+      icon: data.icon || '/logo192.png',
+      badge: '/favicon.svg',
+      vibrate: [100, 50, 100],
+      data: {
+        dateOfArrival: Date.now(),
+        primaryKey: '2'
+      }
+    };
+    event.waitUntil(
+      self.registration.showNotification(data.title || 'مكتبة السلطان', options)
+    );
+  }
+});
+
+// Notification Click Event
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+      if (clientList.length > 0) {
+        let client = clientList[0];
+        for (let i = 0; i < clientList.length; i++) {
+          if (clientList[i].focused) {
+            client = clientList[i];
+          }
+        }
+        return client.focus();
+      }
+      return clients.openWindow('/');
+    })
+  );
+});

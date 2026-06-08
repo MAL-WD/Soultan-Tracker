@@ -194,7 +194,62 @@ export default function SoultanProV5() {
     video: { name: "فيديو", icon: "🎬", color: G.accentLak },
     photo: { name: "صورة", icon: "🖼️", color: G.accentBid }
   });
+  const [pushEnabled, setPushEnabled] = useState(false);
   const wk = getWk();
+
+  const enablePushNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert("عذراً، متصفحك لا يدعم الإشعارات");
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert("لم يتم منح إذن الإشعارات");
+        return;
+      }
+      
+      const registration = await navigator.serviceWorker.ready;
+      
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_URL}/push/vapid-public-key`);
+      const { publicKey } = await res.json();
+      
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+      };
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+
+      await fetch(`${API_URL}/push/subscribe`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json", "x-auth-token": token },
+        body: JSON.stringify(subscription)
+      });
+      
+      setPushEnabled(true);
+      alert("تم تفعيل الإشعارات بنجاح!");
+      
+      await fetch(`${API_URL}/push/test`, {
+        method: 'POST',
+        headers: { "x-auth-token": token }
+      });
+      
+    } catch (e) {
+      console.error(e);
+      alert("حدث خطأ أثناء تفعيل الإشعارات");
+    }
+  };
 
   // ============================================
   // DATA PERSISTENCE
@@ -417,7 +472,7 @@ export default function SoultanProV5() {
   const generateNotifications = () => {
     const today = getTodayEn();
     const alerts = [];
-    BRANCHES.forEach(b => {
+    BRANCHES.filter(b => currentUser?.role === 'admin' || b.id === currentUser?.branchId).forEach(b => {
       const dd = data[b.id]?.[today] || {};
       const sc = (dd.stories || []).filter(Boolean).length;
       if (today !== "FRI" && sc < STORIES_COUNT) {
@@ -578,6 +633,16 @@ export default function SoultanProV5() {
                 <div className="body" style={{ fontWeight: 700, fontSize: 13, color: G.gold }}>{currentUser.username}</div>
                 <div className="caption" style={{ fontSize: 9 }}>{currentUser.role === 'admin' ? "مدير النظام" : "مسؤول فرع"}</div>
               </div>
+              <button
+                onClick={enablePushNotifications}
+                style={{
+                  padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer",
+                  fontFamily: "'ThmanyahText', sans-serif", fontWeight: 700,
+                  border: `1px solid ${pushEnabled ? G.green : G.borderGold}44`,
+                  background: pushEnabled ? `${G.green}22` : "transparent",
+                  color: pushEnabled ? G.green : G.textMuted,
+                }}
+              >{pushEnabled ? "✓ إشعارات نشطة" : "🔔 تفعيل الإشعارات"}</button>
               <button
                 onClick={() => setEditMode(!editMode)}
                 style={{
