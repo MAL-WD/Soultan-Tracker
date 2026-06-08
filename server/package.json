@@ -20,6 +20,8 @@
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.6.2",
-    "nodemon": "^3.1.14"
+    "node-cron": "^4.2.1",
+    "nodemon": "^3.1.14",
+    "web-push": "^3.6.7"
   }
 }

@@ -4,6 +4,8 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const webpush = require('web-push');
+const cron = require('node-cron');
 require('dotenv').config();
 
 const app = express();
@@ -66,16 +68,11 @@ const DataSchema = new mongoose.Schema({
   key: { 
     type: String, 
     required: [true, 'Key is required'], 
-    index: true
+    unique: true
   },
   value: { 
     type: String, 
     required: [true, 'Value is required']
-  },
-  userId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'User',
-    required: true
   },
   createdAt: { 
     type: Date, 
@@ -87,8 +84,6 @@ const DataSchema = new mongoose.Schema({
   }
 });
 
-// Set compound unique index to allow multi-user data isolation
-DataSchema.index({ key: 1, userId: 1 }, { unique: true });
 
 const ActivitySchema = new mongoose.Schema({
   userId: { 
@@ -114,6 +109,24 @@ const ActivitySchema = new mongoose.Schema({
     default: null
   }
 });
+
+const PushSubscriptionSchema = new mongoose.Schema({
+  userId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User',
+    required: true
+  },
+  subscription: {
+    type: Object,
+    required: true
+  },
+  createdAt: { 
+    type: Date, 
+    default: Date.now 
+  }
+});
+PushSubscriptionSchema.index({ 'subscription.endpoint': 1 }, { unique: true });
+const PushSubscription = mongoose.model('PushSubscription', PushSubscriptionSchema);
 
 const User = mongoose.model('User', UserSchema);
 const Data = mongoose.model('Data', DataSchema);
@@ -503,7 +516,7 @@ app.post('/api/global-constants', [auth, adminOnly], async (req, res, next) => {
 // GET single data item
 app.get('/api/storage/:key', auth, async (req, res, next) => {
   try {
-    const item = await Data.findOne({ key: req.params.key, userId: req.user.id });
+    const item = await Data.findOne({ key: req.params.key });
     res.json({
       success: true,
       data: item ? { value: item.value, createdAt: item.createdAt, updatedAt: item.updatedAt } : null
@@ -516,7 +529,7 @@ app.get('/api/storage/:key', auth, async (req, res, next) => {
 // GET all data for user
 app.get('/api/storage', auth, async (req, res, next) => {
   try {
-    const items = await Data.find({ userId: req.user.id }).sort({ updatedAt: -1 });
+    const items = await Data.find().sort({ updatedAt: -1 });
     res.json({
       success: true,
       count: items.length,
@@ -540,7 +553,7 @@ app.post('/api/storage', auth, async (req, res, next) => {
     }
 
     const item = await Data.findOneAndUpdate(
-      { key, userId: req.user.id },
+      { key },
       { value, updatedAt: new Date() },
       { upsert: true, new: true, runValidators: true }
     );
@@ -567,7 +580,7 @@ app.post('/api/storage', auth, async (req, res, next) => {
 // DELETE data
 app.delete('/api/storage/:key', auth, async (req, res, next) => {
   try {
-    const item = await Data.findOneAndDelete({ key: req.params.key, userId: req.user.id });
+    const item = await Data.findOneAndDelete({ key: req.params.key });
 
     if (!item) {
       return res.status(404).json({
@@ -620,6 +633,62 @@ app.get('/api/activities', auth, async (req, res, next) => {
 // HEALTH CHECK
 // ============================================
 
+// ============================================
+// PUSH NOTIFICATIONS ROUTES
+// ============================================
+
+app.get('/api/push/vapid-public-key', (req, res) => {
+  if (!app.locals.vapidPublicKey) {
+    return res.status(500).json({ success: false, error: 'VAPID keys not initialized' });
+  }
+  res.json({ success: true, publicKey: app.locals.vapidPublicKey });
+});
+
+app.post('/api/push/subscribe', auth, async (req, res, next) => {
+  try {
+    const subscription = req.body;
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ success: false, error: 'Invalid subscription' });
+    }
+    
+    await PushSubscription.findOneAndUpdate(
+      { 'subscription.endpoint': subscription.endpoint },
+      { userId: req.user.id, subscription },
+      { upsert: true, new: true }
+    );
+    
+    res.json({ success: true, message: 'Subscribed to push notifications' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/push/test', auth, async (req, res, next) => {
+  try {
+    const subs = await PushSubscription.find({ userId: req.user.id });
+    if (subs.length === 0) return res.status(404).json({ success: false, error: 'No subscriptions found' });
+    
+    const payload = JSON.stringify({
+      title: 'إشعار تجريبي',
+      body: 'تم تفعيل الإشعارات بنجاح على هذا الجهاز!',
+      icon: '/icon-192x192.png'
+    });
+
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(sub.subscription, payload);
+      } catch (e) {
+        if (e.statusCode === 410 || e.statusCode === 404) {
+          await PushSubscription.findByIdAndDelete(sub._id);
+        }
+      }
+    }
+    res.json({ success: true, message: 'Test notification sent' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
@@ -636,9 +705,10 @@ app.get('/api/health', (req, res) => {
 mongoose.connect(MONGODB_URI, {
   retryWrites: true
 })
-  .then(() => {
+  .then(async () => {
     console.log('✅ MongoDB Connected:', MONGODB_URI);
     
+    await initWebPush();
     // Initialize admin user if needed
     initializeDatabase();
   })
@@ -729,6 +799,75 @@ const initializeDatabase = async () => {
       });
       console.log('✅ Global constant SM_TASKS_BY_TYPE seeded.');
     }
+
+    // 3. Migrate Data to be global
+    try {
+      await Data.collection.dropIndex('key_1_userId_1');
+      console.log('✅ Dropped old compound index key_1_userId_1');
+    } catch (e) {
+      // Ignore if index does not exist
+    }
+
+    try {
+      // Find all data to group by key
+      const allData = await Data.find();
+      const grouped = {};
+      for (const d of allData) {
+        if (!grouped[d.key]) grouped[d.key] = [];
+        grouped[d.key].push(d);
+      }
+
+      for (const key in grouped) {
+        const docs = grouped[key];
+        if (docs.length > 1) {
+          // Merge duplicates
+          docs.sort((a, b) => a.updatedAt - b.updatedAt); // Older first
+          let mergedVal = null;
+          
+          for (const d of docs) {
+            try {
+              const parsed = JSON.parse(d.value);
+              if (Array.isArray(parsed)) {
+                mergedVal = parsed; // For arrays, just take the newest
+              } else if (parsed && typeof parsed === 'object') {
+                if (!mergedVal) mergedVal = {};
+                // Deep merge
+                const mergeDeep = (target, source) => {
+                  Object.keys(source).forEach(k => {
+                    const tv = target[k];
+                    const sv = source[k];
+                    if (Array.isArray(tv) && Array.isArray(sv)) {
+                      target[k] = sv;
+                    } else if (tv && sv && typeof tv === 'object' && typeof sv === 'object' && !Array.isArray(tv)) {
+                      target[k] = mergeDeep(Object.assign({}, tv), sv);
+                    } else {
+                      target[k] = sv;
+                    }
+                  });
+                  return target;
+                };
+                mergedVal = mergeDeep(mergedVal, parsed);
+              } else {
+                mergedVal = parsed; // fallback
+              }
+            } catch (e) {
+              mergedVal = d.value;
+            }
+          }
+          
+          const mainDoc = docs[0];
+          mainDoc.value = typeof mergedVal === 'string' ? mergedVal : JSON.stringify(mergedVal);
+          await mainDoc.save();
+          
+          for (let i = 1; i < docs.length; i++) {
+            await Data.findByIdAndDelete(docs[i]._id);
+          }
+          console.log(`✅ Merged duplicated data for key: ${key}`);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Data migration error:', err.message);
+    }
   } catch (err) {
     console.error('❌ Database initialization error:', err.message);
   }
@@ -748,6 +887,103 @@ app.use((req, res) => {
 
 // Global error handler
 app.use(errorHandler);
+
+// Initialize Web Push
+const initWebPush = async () => {
+  try {
+    let vapidKeys = await GlobalConstant.findOne({ key: 'VAPID_KEYS' });
+    if (!vapidKeys) {
+      const newKeys = webpush.generateVAPIDKeys();
+      vapidKeys = await GlobalConstant.create({
+        key: 'VAPID_KEYS',
+        value: newKeys
+      });
+      console.log('✅ Generated new VAPID keys for Web Push');
+    }
+    webpush.setVapidDetails(
+      'mailto:admin@soltantracker.com',
+      vapidKeys.value.publicKey,
+      vapidKeys.value.privateKey
+    );
+    app.locals.vapidPublicKey = vapidKeys.value.publicKey;
+  } catch (err) {
+    console.error('❌ Failed to initialize Web Push:', err);
+  }
+};
+
+// Schedule daily check at 20:00 (8 PM)
+cron.schedule('0 20 * * *', async () => {
+  console.log('⏰ Running daily cron job to check incomplete tasks...');
+  try {
+    const d = new Date();
+    const j = new Date(d.getFullYear(), 0, 1);
+    const wk = `skv5-${d.getFullYear()}-${Math.ceil(((d - j) / 86400000 + j.getDay() + 1) / 7)}`;
+    
+    const globalData = await Data.findOne({ key: wk });
+    if (!globalData) return;
+    const parsedData = JSON.parse(globalData.value);
+    
+    const m = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    const todayEn = m[d.getDay()];
+    
+    let dTypes = [];
+    const dctDoc = await GlobalConstant.findOne({ key: 'DAY_CONTENT_TYPES' });
+    if (dctDoc && dctDoc.value) dTypes = dctDoc.value[todayEn] || [];
+    
+    let smTasks = {};
+    const smDoc = await GlobalConstant.findOne({ key: 'SM_TASKS_BY_TYPE' });
+    if (smDoc && smDoc.value) smTasks = smDoc.value;
+    
+    const allTasks = dTypes.flatMap(type => (smTasks[type] || []).map(x => ({ key: `${type}_${x.id}` })));
+    
+    const users = await User.find({ isActive: true });
+    
+    for (const user of users) {
+      if (user.role !== 'manager' || !user.branchId) continue;
+      
+      const branchId = user.branchId;
+      const dd = parsedData[branchId]?.[todayEn] || {};
+      
+      const hasStories = todayEn !== "FRI";
+      const sc = (dd.stories || []).filter(Boolean).length;
+      const tasksDone = allTasks.filter(t => dd.tasks?.[t.key]).length;
+      const totalTasks = allTasks.length;
+      
+      const messages = [];
+      if (hasStories && sc < 6) {
+        messages.push(`لم يتم استكمال الستوريز (${sc}/6).`);
+      }
+      if (totalTasks > 0 && tasksDone < totalTasks) {
+        messages.push(`هناك مهام غير مكتملة (${tasksDone}/${totalTasks}).`);
+      }
+      if (!dd.published) {
+        messages.push('لم يتم تأكيد النشر اليوم.');
+      }
+      
+      if (messages.length > 0) {
+        const subs = await PushSubscription.find({ userId: user._id });
+        if (subs.length > 0) {
+          const payload = JSON.stringify({
+            title: `تذكير مهام ${branchId}`,
+            body: messages.join('\n'),
+            icon: '/icon-192x192.png'
+          });
+          for (const sub of subs) {
+            try {
+              await webpush.sendNotification(sub.subscription, payload);
+            } catch (e) {
+              if (e.statusCode === 410 || e.statusCode === 404) {
+                await PushSubscription.findByIdAndDelete(sub._id);
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('❌ Cron job error:', err.message);
+  }
+});
 
 // Start Server
 app.listen(PORT, () => {
