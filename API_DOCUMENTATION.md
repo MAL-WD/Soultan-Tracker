@@ -137,6 +137,21 @@ const tasksData = JSON.parse(data.value);
 
 ---
 
+### 3. **Monthly Content Planning APIs** (Protected - Requires Token)
+
+Specialized endpoints for the Monthly Content Planning Calendar system:
+- `GET /api/content-plan/:monthKey` - Fetch full content plan for month
+- `POST /api/content-plan/:monthKey` - Save/Update entire plan
+- `POST /api/content-plan/:monthKey/video` - Add video idea
+- `PUT /api/content-plan/:monthKey/video/:id` - Update video idea
+- `DELETE /api/content-plan/:monthKey/video/:id` - Delete video idea
+- `POST /api/content-plan/:monthKey/event` - Add event
+- `DELETE /api/content-plan/:monthKey/event/:id` - Delete event
+- `POST /api/content-plan/:monthKey/campaign` - Add campaign/offer
+- `DELETE /api/content-plan/:monthKey/campaign/:id` - Delete campaign/offer
+
+---
+
 ## ✅ Summary
 
 **YES**, all the APIs needed for creating and updating states are already there! ✅

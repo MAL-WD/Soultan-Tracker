@@ -149,6 +149,63 @@ const GlobalConstantSchema = new mongoose.Schema({
 });
 const GlobalConstant = mongoose.model('GlobalConstant', GlobalConstantSchema);
 
+const SocialConfigSchema = new mongoose.Schema({
+  branchId: { 
+    type: String, 
+    required: [true, 'Branch ID is required'], 
+    unique: true 
+  },
+  fb: { type: String, default: "" },
+  insta: { type: String, default: "" },
+  tiktok: { type: String, default: "" },
+  updatedAt: { type: Date, default: Date.now }
+});
+const SocialConfig = mongoose.model('SocialConfig', SocialConfigSchema);
+
+const ContentPlanSchema = new mongoose.Schema({
+  monthKey: { type: String, required: true, unique: true }, // e.g., "2026-10"
+  videos: [{
+    id: { type: String, required: true },
+    title: { type: String, required: true },
+    contentType: { type: String },
+    productCategory: { type: String },
+    targetAudience: { type: String },
+    assignee: { type: String, default: 'أ' },
+    status: { type: String, enum: ['idea', 'review', 'ready-shoot', 'shooting', 'editing', 'ready-publish', 'published', 'evaluating'], default: 'idea' },
+    scheduledDate: { type: Number }, // Day of month (1-31)
+    hasGoal: { type: Boolean, default: true },
+    notes: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  events: [{
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    eventType: { type: String },
+    eventDate: { type: String },
+    location: { type: String },
+    marketingGoal: { type: String },
+    shootDate: { type: String },
+    publishDate: { type: String },
+    shootRequirements: { type: String },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  campaigns: [{
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    campaignType: { type: String },
+    productCategory: { type: String },
+    details: { type: String },
+    startDate: { type: String },
+    endDate: { type: String },
+    distribution: { type: String },
+    adBudget: { type: Number, default: 0 },
+    productionBudget: { type: Number, default: 0 },
+    createdAt: { type: Date, default: Date.now }
+  }],
+  updatedAt: { type: Date, default: Date.now }
+});
+const ContentPlan = mongoose.model('ContentPlan', ContentPlanSchema);
+
 // ============================================
 // MIDDLEWARE
 // ============================================
@@ -577,6 +634,220 @@ app.post('/api/storage', auth, async (req, res, next) => {
   }
 });
 
+// ============================================
+// SOCIAL CONFIG & SYNC ROUTES
+// ============================================
+
+// In-memory cache for social follower sync
+const socialSyncCache = {};
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Helper to extract handles
+function extractUsername(urlOrHandle, platform) {
+  if (!urlOrHandle) return "";
+  let handle = urlOrHandle.trim();
+  if (handle.startsWith("http://") || handle.startsWith("https://")) {
+    try {
+      const urlObj = new URL(handle);
+      let path = urlObj.pathname;
+      path = path.replace(/^\/+|\/+$/g, "");
+      if (platform === "tiktok" && path.startsWith("@")) {
+        path = path.substring(1);
+      }
+      const segments = path.split("/");
+      handle = segments[segments.length - 1] || path;
+    } catch (e) {}
+  }
+  handle = handle.split("?")[0].replace(/^\/+|\/+$/g, "");
+  if (platform === "tiktok" && handle.startsWith("@")) {
+    handle = handle.substring(1);
+  }
+  return handle;
+}
+
+// Scraper: TikTok
+async function scrapeTikTok(username) {
+  if (!username) return null;
+  try {
+    const url = `https://www.tiktok.com/@${username}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+    if (res.status !== 200) return null;
+    const html = await res.text();
+    const match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (match) {
+      const parsed = JSON.parse(match[1]);
+      const stats = parsed?.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo?.stats;
+      return stats?.followerCount || null;
+    }
+  } catch (err) {
+    console.error(`Error scraping TikTok for ${username}:`, err.message);
+  }
+  return null;
+}
+
+// Scraper: Instagram
+async function scrapeInstagram(username) {
+  if (!username) return null;
+  try {
+    const url = `https://www.instagram.com/${username}/`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+    if (res.status !== 200) return null;
+    const html = await res.text();
+    const metaMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/) || 
+                      html.match(/<meta\s+name="description"\s+content="([^"]+)"/);
+    if (metaMatch) {
+      const followersMatch = metaMatch[1].match(/([\d.,KkMmB]+)\s*Followers/i) || 
+                             metaMatch[1].match(/([\d.,KkMmB]+)\s*متابع/);
+      if (followersMatch) {
+        const val = followersMatch[1].toLowerCase();
+        let multiplier = 1;
+        if (val.endsWith('k')) multiplier = 1000;
+        else if (val.endsWith('m')) multiplier = 1000000;
+        else if (val.endsWith('b')) multiplier = 1000000000;
+        
+        const num = parseFloat(val.replace(/[kmb]/g, ''));
+        return Math.round(num * multiplier);
+      }
+    }
+  } catch (err) {
+    console.error(`Error scraping Instagram for ${username}:`, err.message);
+  }
+  return null;
+}
+
+// Scraper: Facebook
+async function scrapeFacebook(pageName) {
+  if (!pageName) return null;
+  try {
+    const url = `https://www.facebook.com/plugins/page.php?href=https://www.facebook.com/${pageName}&locale=en_US`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+    if (res.status !== 200) return null;
+    const html = await res.text();
+    const match = html.match(/([\d.,KkMmB]+)\s*likes/i) || 
+                  html.match(/([\d.,KkMmB]+)\s*followers/i) ||
+                  html.match(/_1drp">([^<]+)/);
+    if (match) {
+      const val = match[1].toLowerCase().replace(/,/g, '');
+      let multiplier = 1;
+      if (val.endsWith('k')) multiplier = 1000;
+      else if (val.endsWith('m')) multiplier = 1000000;
+      else if (val.endsWith('b')) multiplier = 1000000000;
+      
+      const num = parseFloat(val.replace(/[kmb]/g, ''));
+      return Math.round(num * multiplier);
+    }
+  } catch (err) {
+    console.error(`Error scraping Facebook for ${pageName}:`, err.message);
+  }
+  return null;
+}
+
+// GET social config
+app.get('/api/social/config', auth, async (req, res, next) => {
+  try {
+    const configs = await SocialConfig.find();
+    const formatted = {};
+    configs.forEach(c => {
+      formatted[c.branchId] = { fb: c.fb, insta: c.insta, tiktok: c.tiktok };
+    });
+    res.json({
+      success: true,
+      data: formatted
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST social config
+app.post('/api/social/config', [auth, adminOnly], async (req, res, next) => {
+  try {
+    const { branchId, fb, insta, tiktok } = req.body;
+    if (!branchId) {
+      return res.status(400).json({ success: false, error: 'Branch ID is required.' });
+    }
+    const config = await SocialConfig.findOneAndUpdate(
+      { branchId },
+      { fb: fb || "", insta: insta || "", tiktok: tiktok || "", updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+    res.json({
+      success: true,
+      message: 'Social config updated successfully.',
+      data: config
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST social sync
+app.post('/api/social/sync', auth, async (req, res, next) => {
+  try {
+    const { force } = req.body;
+    const configs = await SocialConfig.find();
+    const results = {};
+    const now = Date.now();
+
+    for (const config of configs) {
+      const bid = config.branchId;
+      
+      // Check cache unless forced
+      if (!force && socialSyncCache[bid] && (now - socialSyncCache[bid].timestamp < CACHE_TTL_MS)) {
+        results[bid] = socialSyncCache[bid].data;
+        continue;
+      }
+
+      // Sync platforms
+      const fbUser = extractUsername(config.fb, 'facebook');
+      const instaUser = extractUsername(config.insta, 'instagram');
+      const tiktokUser = extractUsername(config.tiktok, 'tiktok');
+
+      const [fbCount, instaCount, tiktokCount] = await Promise.all([
+        scrapeFacebook(fbUser),
+        scrapeInstagram(instaUser),
+        scrapeTikTok(tiktokUser)
+      ]);
+
+      const counts = {
+        fb: fbCount,
+        insta: instaCount,
+        tiktok: tiktokCount
+      };
+
+      // Cache results
+      socialSyncCache[bid] = {
+        timestamp: now,
+        data: counts
+      };
+
+      results[bid] = counts;
+    }
+
+    res.json({
+      success: true,
+      data: results
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE data
 app.delete('/api/storage/:key', auth, async (req, res, next) => {
   try {
@@ -624,6 +895,295 @@ app.get('/api/activities', auth, async (req, res, next) => {
       count: activities.length,
       data: activities
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================
+// CONTENT PLAN ROUTES
+// ============================================
+
+// GET content plan for a month
+app.get('/api/content-plan/:monthKey', auth, async (req, res, next) => {
+  try {
+    const { monthKey } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const plan = await ContentPlan.findOne({ monthKey });
+    res.json({
+      success: true,
+      data: plan || { monthKey, videos: [], events: [], campaigns: [] }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// CREATE or UPDATE entire content plan for a month
+app.post('/api/content-plan/:monthKey', auth, async (req, res, next) => {
+  try {
+    const { monthKey } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const { videos, events, campaigns } = req.body;
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      { monthKey, videos, events, campaigns, updatedAt: new Date() },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'update',
+      details: `Content plan updated for month: ${monthKey}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ADD a video idea to a month's plan
+app.post('/api/content-plan/:monthKey/video', auth, async (req, res, next) => {
+  try {
+    const { monthKey } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const { id, title } = req.body;
+    if (!id || !title) {
+      return res.status(400).json({ success: false, error: 'Video id and title are required.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $push: { videos: { ...req.body, createdAt: new Date() } },
+        $set: { updatedAt: new Date() },
+        $setOnInsert: { monthKey }
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'create',
+      details: `Video idea added to ${monthKey}: ${title}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UPDATE a video idea
+app.put('/api/content-plan/:monthKey/video/:id', auth, async (req, res, next) => {
+  try {
+    const { monthKey, id } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const plan = await ContentPlan.findOne({ monthKey });
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'Content plan not found.' });
+    }
+
+    const videoIndex = plan.videos.findIndex(v => v.id === id);
+    if (videoIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Video not found.' });
+    }
+
+    // Merge existing video data with updates, preserving id and createdAt
+    const existingVideo = plan.videos[videoIndex].toObject();
+    plan.videos[videoIndex] = { ...existingVideo, ...req.body, id, createdAt: existingVideo.createdAt };
+    plan.updatedAt = new Date();
+    await plan.save();
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'update',
+      details: `Video idea updated in ${monthKey}: ${req.body.title || id}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE a video idea
+app.delete('/api/content-plan/:monthKey/video/:id', auth, async (req, res, next) => {
+  try {
+    const { monthKey, id } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $pull: { videos: { id } },
+        $set: { updatedAt: new Date() }
+      },
+      { new: true }
+    );
+
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'Content plan not found.' });
+    }
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'delete',
+      details: `Video idea deleted from ${monthKey}: ${id}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ADD an event to a month's plan
+app.post('/api/content-plan/:monthKey/event', auth, async (req, res, next) => {
+  try {
+    const { monthKey } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const { id, name } = req.body;
+    if (!id || !name) {
+      return res.status(400).json({ success: false, error: 'Event id and name are required.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $push: { events: { ...req.body, createdAt: new Date() } },
+        $set: { updatedAt: new Date() },
+        $setOnInsert: { monthKey }
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'create',
+      details: `Event added to ${monthKey}: ${name}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE an event
+app.delete('/api/content-plan/:monthKey/event/:id', auth, async (req, res, next) => {
+  try {
+    const { monthKey, id } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $pull: { events: { id } },
+        $set: { updatedAt: new Date() }
+      },
+      { new: true }
+    );
+
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'Content plan not found.' });
+    }
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'delete',
+      details: `Event deleted from ${monthKey}: ${id}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ADD a campaign to a month's plan
+app.post('/api/content-plan/:monthKey/campaign', auth, async (req, res, next) => {
+  try {
+    const { monthKey } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const { id, name } = req.body;
+    if (!id || !name) {
+      return res.status(400).json({ success: false, error: 'Campaign id and name are required.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $push: { campaigns: { ...req.body, createdAt: new Date() } },
+        $set: { updatedAt: new Date() },
+        $setOnInsert: { monthKey }
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'create',
+      details: `Campaign added to ${monthKey}: ${name}`
+    });
+
+    res.json({ success: true, data: plan });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE a campaign
+app.delete('/api/content-plan/:monthKey/campaign/:id', auth, async (req, res, next) => {
+  try {
+    const { monthKey, id } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ success: false, error: 'Invalid monthKey format. Use YYYY-MM.' });
+    }
+
+    const plan = await ContentPlan.findOneAndUpdate(
+      { monthKey },
+      {
+        $pull: { campaigns: { id } },
+        $set: { updatedAt: new Date() }
+      },
+      { new: true }
+    );
+
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'Content plan not found.' });
+    }
+
+    await Activity.create({
+      userId: req.user.id,
+      action: 'delete',
+      details: `Campaign deleted from ${monthKey}: ${id}`
+    });
+
+    res.json({ success: true, data: plan });
   } catch (err) {
     next(err);
   }
@@ -798,6 +1358,31 @@ const initializeDatabase = async () => {
         }
       });
       console.log('✅ Global constant SM_TASKS_BY_TYPE seeded.');
+    }
+
+    // Seed default SocialConfigs
+    try {
+      const branches = ['400', 'laknab', 'bidando'];
+      for (const b of branches) {
+        const exists = await SocialConfig.findOne({ branchId: b });
+        if (!exists) {
+          let defaults = { fb: "", insta: "", tiktok: "" };
+          if (b === '400') {
+            defaults = {
+              fb: "https://www.facebook.com/PapetrieelSoltane/?locale=fr_FR",
+              insta: "https://www.instagram.com/soultan_stationery/",
+              tiktok: "https://www.tiktok.com/@soultan_stationery?_r=1&_t=ZS-97VqfNvCiv6"
+            };
+          }
+          await SocialConfig.create({
+            branchId: b,
+            ...defaults
+          });
+          console.log(`✅ Default SocialConfig seeded for branch ${b}`);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Failed to seed default social configs:', err.message);
     }
 
     // 3. Migrate Data to be global

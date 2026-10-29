@@ -329,7 +329,7 @@ function getDayPct(data, branchId, dayEn) {
   const dd    = data[branchId]?.[dayEn] || {};
   const types = DAY_CONTENT_TYPES[dayEn] || [];
   const all   = types.flatMap(t => (SM_TASKS_BY_TYPE[t] || []).map(x => ({ key: `${t}_${x.id}` })));
-  const hasStories = dayEn !== "FRI";
+  const hasStories = true;
   const done  = all.filter(t => dd.tasks?.[t.key]).length + (hasStories ? (dd.stories || []).filter(Boolean).length : 0);
   const total = all.length + (hasStories ? STORIES_COUNT : 0);
   return total > 0 ? Math.round((done / total) * 100) : 0;
@@ -362,7 +362,7 @@ export function generateTasksReport(data, branchId, dayEn, branchNames, activeBr
   const allTasks = types.flatMap(type =>
     (SM_TASKS_BY_TYPE[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type }))
   );
-  const hasStories = dayEn !== "FRI";
+  const hasStories = true;
   const storiesDone = (dd.stories || []).filter(Boolean).length;
   const tasksDone   = allTasks.filter(t => dd.tasks?.[t.key]).length;
   const total       = allTasks.length + (hasStories ? STORIES_COUNT : 0);
@@ -950,7 +950,7 @@ export function generateFullReport(data, branchNames, monthPlan, b2bTasks, activ
       const all   = types.flatMap(type => (SM_TASKS_BY_TYPE[type] || []).map(t => ({ key: `${type}_${t.id}` })));
       const done  = all.filter(t => dd.tasks?.[t.key]).length;
       const sDone = (dd.stories || []).filter(Boolean).length;
-      const hasS  = d.en !== "FRI";
+      const hasS  = true;
       const tot   = all.length + (hasS ? STORIES_COUNT : 0);
       const pct   = tot > 0 ? Math.round(((done + (hasS ? sDone : 0)) / tot) * 100) : 0;
       return { branch: branchNames[b.id], day: d.ar, done, total: all.length, stories: `${sDone}/${hasS ? STORIES_COUNT : "—"}`, pct, published: dd.published };
@@ -1086,4 +1086,172 @@ export function generateFullReport(data, branchNames, monthPlan, b2bTasks, activ
   `;
 
   renderReport("التقرير الشامل الأسبوعي — مكتبة السلطان", body);
+}
+
+// ============================================================
+// CONTENT PLANNING REPORT (MONTHLY VIDEO CALENDAR & STRATEGY)
+// ============================================================
+export function generateContentPlanningReport(monthLabel, videos = [], events = [], campaigns = []) {
+  const STATUS_LABELS = {
+    idea: 'فكرة',
+    review: 'قيد المراجعة',
+    'ready-shoot': 'جاهز للتصوير',
+    shooting: 'قيد التصوير',
+    editing: 'قيد المونتاج',
+    'ready-publish': 'جاهز للنشر',
+    published: 'منشور',
+    evaluating: 'تقييم النتائج'
+  };
+
+  const STATUS_COLORS = {
+    published: '#003D32',
+    idea: '#8A8578',
+    review: '#C28A1B',
+    'ready-shoot': '#2F6DB5',
+    shooting: '#7A4FC4',
+    editing: '#D9692B',
+    'ready-publish': '#2E8B57',
+    evaluating: '#118A9C'
+  };
+
+  const sortedVideos = [...videos].sort((a, b) => (Number(a.scheduledDate) || 0) - (Number(b.scheduledDate) || 0));
+  const publishedCount = videos.filter(v => v.status === 'published').length;
+  const inProgressCount = videos.filter(v => ['review', 'ready-shoot', 'shooting', 'editing', 'ready-publish'].includes(v.status)).length;
+  const ideaCount = videos.filter(v => v.status === 'idea' || !v.status).length;
+  const incompleteCount = videos.filter(v => !v.productCategory || !v.hasGoal).length;
+
+  const body = `
+    ${headerHTML(`خطة المحتوى الشهرية — ${monthLabel}`)}
+
+    <!-- STATS CARDS -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">إجمالي الفيديوهات المخططة</div>
+        <div class="kpi-val" style="color:var(--gold)">${videos.length}</div>
+        <div class="kpi-sub">فكرة لشهر ${monthLabel}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">فيديوهات منشورة</div>
+        <div class="kpi-val" style="color:var(--green-ok)">${publishedCount}</div>
+        <div class="kpi-sub">${videos.length ? Math.round((publishedCount / videos.length) * 100) : 0}% مكتمل النشر</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">قيد التنفيذ والإنتاج</div>
+        <div class="kpi-val" style="color:var(--blue)">${inProgressCount}</div>
+        <div class="kpi-sub">تصوير ومونتاج ومراجعة</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">أفكار قيد الدراسة</div>
+        <div class="kpi-val" style="color:#7A4FC4">${ideaCount}</div>
+        <div class="kpi-sub">${incompleteCount > 0 ? `<span style="color:var(--red)">(${incompleteCount} غير مكتملة)</span>` : 'جاهزة للتطوير'}</div>
+      </div>
+    </div>
+
+    <!-- PIPELINE STATUS BREAKDOWN -->
+    <div class="section">
+      <div class="section-title"><span class="icon">📊</span> مسار مراحل الإنتاج (Pipeline Overview)</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${Object.entries(STATUS_LABELS).map(([k, label]) => {
+          const count = videos.filter(v => (v.status || 'idea') === k).length;
+          const color = STATUS_COLORS[k] || '#888';
+          return `
+            <div style="flex:1; min-width:85px; background:#F8F6F0; border:1px solid #E4DED3; border-radius:10px; padding:8px 10px; text-align:center;">
+              <div style="font-size:10px; color:#6B675E; font-weight:600; margin-bottom:4px;">${label}</div>
+              <div style="font-size:18px; font-weight:900; color:${color};">${count}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- DETAILED VIDEOS TABLE -->
+    <div class="section">
+      <div class="section-title"><span class="icon">🎬</span> جدول خطة الفيديوهات التفصيلي (${videos.length} فيديو)</div>
+      ${sortedVideos.length === 0 ? '<p style="text-align:center; color:#999; padding:20px 0;">لا توجد فيديوهات مسجلة في هذا الشهر.</p>' : `
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px; text-align:center;">اليوم</th>
+              <th>عنوان الفيديو / الفكرة</th>
+              <th>نوع المحتوى</th>
+              <th>فئة المنتج</th>
+              <th>الجمهور المستهدف</th>
+              <th style="width:50px; text-align:center;">المسؤول</th>
+              <th style="width:90px; text-align:center;">الحالة</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedVideos.map(v => {
+              const stLabel = STATUS_LABELS[v.status] || 'فكرة';
+              const stColor = STATUS_COLORS[v.status] || '#888';
+              return `
+                <tr>
+                  <td style="text-align:center; font-weight:700; color:var(--green-mid);">${v.scheduledDate ? `${v.scheduledDate}` : '—'}</td>
+                  <td><strong>${v.title}</strong>${v.notes ? `<div style="font-size:10px; color:#888;">${v.notes}</div>` : ''}</td>
+                  <td><span style="font-size:11px; padding:2px 6px; background:#E3EDEA; color:#003D32; border-radius:4px;">${v.contentType || '—'}</span></td>
+                  <td><span style="font-size:11px; color:${v.productCategory ? '#333' : 'var(--red)'};">${v.productCategory || 'بدون فئة'}</span></td>
+                  <td><span style="font-size:11px; color:#666;">${v.targetAudience || '—'}</span></td>
+                  <td style="text-align:center;"><span style="display:inline-block; width:22px; height:22px; line-height:22px; border-radius:50%; background:var(--green-mid); color:#fff; font-size:11px; font-weight:700;">${v.assignee || 'أ'}</span></td>
+                  <td style="text-align:center;">
+                    <span style="display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:6px; background:${stColor}18; color:${stColor}; border:1px solid ${stColor}44;">
+                      ${stLabel}
+                    </span>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+
+    <!-- EVENTS & CAMPAIGNS (TWO COLUMNS) -->
+    <div class="two-col">
+      <!-- Events Section -->
+      <div class="section" style="margin-bottom:0;">
+        <div class="section-title"><span class="icon">◷</span> الأحداث والفعاليات (${events.length})</div>
+        ${events.length === 0 ? '<p style="color:#999; font-size:11px;">لا توجد أحداث مسجلة لهذا الشهر.</p>' : `
+          <table style="font-size:11px;">
+            <thead>
+              <tr><th>الحدث</th><th>النوع</th><th>تاريخ الحدث</th><th>التصوير</th></tr>
+            </thead>
+            <tbody>
+              ${events.map(e => `
+                <tr>
+                  <td><strong>${e.name}</strong>${e.location ? `<div style="color:#888; font-size:10px;">📍 ${e.location}</div>` : ''}</td>
+                  <td><span style="font-size:10px; padding:1px 6px; background:#FDEBDD; color:#C2410C; border-radius:4px;">${e.eventType || '—'}</span></td>
+                  <td>${e.eventDate || '—'}</td>
+                  <td>${e.shootDate || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <!-- Campaigns Section -->
+      <div class="section" style="margin-bottom:0;">
+        <div class="section-title"><span class="icon">💰</span> العروض والحملات (${campaigns.length})</div>
+        ${campaigns.length === 0 ? '<p style="color:#999; font-size:11px;">لا توجد عروض أو حملات مسجلة لهذا الشهر.</p>' : `
+          <table style="font-size:11px;">
+            <thead>
+              <tr><th>الحملة</th><th>النوع</th><th>الفترة</th><th>التوزيع</th></tr>
+            </thead>
+            <tbody>
+              ${campaigns.map(c => `
+                <tr>
+                  <td><strong>${c.name}</strong>${c.productCategory ? `<div style="color:#888; font-size:10px;">🏷️ ${c.productCategory}</div>` : ''}</td>
+                  <td><span style="font-size:10px; padding:1px 6px; background:#F8F0D2; color:#9A7400; border-radius:4px;">${c.campaignType || '—'}</span></td>
+                  <td>${c.startDate || ''} ${c.endDate ? `→ ${c.endDate}` : ''}</td>
+                  <td>${c.distribution || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    </div>
+  `;
+
+  renderReport(`خطة المحتوى الشهرية — ${monthLabel} — مكتبة السلطان`, body);
 }

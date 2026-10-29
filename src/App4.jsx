@@ -455,7 +455,7 @@ export default function SoultanProV4(){
           })}
 
           {/* Stories */}
-          {day!=="FRI"&&(
+          {true&&(
             <div style={{marginTop:16,marginBottom:14}}>
               <div className="label" style={{margin:"0 0 10px"}}>الستوريز اليومية · {(curData.stories||[]).filter(Boolean).length}/{STORIES_COUNT}</div>
               <div style={{display:"flex",gap:8}}>

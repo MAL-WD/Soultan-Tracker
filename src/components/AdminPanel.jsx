@@ -23,7 +23,15 @@ export default function AdminPanel({
   const [editPassword, setEditPassword] = useState("");
 
   // ======== Admin Sub-Tab State ========
-  const [adminTab, setAdminTab] = useState("users"); // "users" | "content"
+  const [adminTab, setAdminTab] = useState("users"); // "users" | "content" | "social"
+
+  // ======== Social Configuration State ========
+  const [socialConfigs, setSocialConfigs] = useState({
+    "400": { fb: "", insta: "", tiktok: "" },
+    "laknab": { fb: "", insta: "", tiktok: "" },
+    "bidando": { fb: "", insta: "", tiktok: "" }
+  });
+  const [loadingSocial, setLoadingSocial] = useState(false);
 
   // ======== Content Customizer State ========
   const [savingConstants, setSavingConstants] = useState(false);
@@ -49,7 +57,59 @@ export default function AdminPanel({
     setLoading(false);
   };
 
-  useEffect(() => { fetchUsers(); }, []);
+  const fetchSocialConfig = async () => {
+    setLoadingSocial(true);
+    try {
+      const r = await fetch(`${apiUrl}/social/config`, { headers: { "x-auth-token": token } });
+      const d = await r.json();
+      if (d.success && d.data) {
+        setSocialConfigs(prev => ({
+          ...prev,
+          ...d.data
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to fetch social config:", e);
+    }
+    setLoadingSocial(false);
+  };
+
+  const saveSocialConfig = async (branchId) => {
+    setError("");
+    const config = socialConfigs[branchId];
+    try {
+      const r = await fetch(`${apiUrl}/social/config`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          branchId,
+          fb: config.fb,
+          insta: config.insta,
+          tiktok: config.tiktok
+        })
+      });
+      const d = await r.json();
+      if (d.success) {
+        showMsg(`تم تحديث حسابات فرع ${getBranchName(branchId)} بنجاح`);
+      } else {
+        setError(d.error || "فشل في حفظ إعدادات التواصل الاجتماعي");
+      }
+    } catch {
+      setError("تعذر الاتصال بالخادم");
+    }
+  };
+
+  const handleSocialChange = (branchId, platform, value) => {
+    setSocialConfigs(prev => ({
+      ...prev,
+      [branchId]: {
+        ...prev[branchId],
+        [platform]: value
+      }
+    }));
+  };
+
+  useEffect(() => { fetchUsers(); fetchSocialConfig(); }, []);
 
   const showMsg = (msg) => {
     setSuccess(msg);
@@ -325,6 +385,7 @@ export default function AdminPanel({
         {[
           { id: "users", label: "👥 إدارة الحسابات", color: G.gold },
           { id: "content", label: "⚙️ إعدادات المحتوى والمهام", color: G.accentLak },
+          { id: "social", label: "📱 حسابات التواصل الاجتماعي", color: G.accentBid },
         ].map(tab => {
           const isA = adminTab === tab.id;
           return (
@@ -882,6 +943,78 @@ export default function AdminPanel({
             </div>
           </div>
 
+        </div>
+      )}
+
+      {adminTab === "social" && (
+        <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ background: G.card, border: `1px solid ${G.border}`, borderRadius: 20, padding: "24px" }}>
+            <div className="h3" style={{ color: G.gold, marginBottom: 6 }}>📱 إعدادات حسابات التواصل الاجتماعي للفروع</div>
+            <div className="caption" style={{ color: G.textMuted, marginBottom: 18 }}>
+              أدخل روابط أو معرفات حسابات التواصل الاجتماعي لكل فرع لتحديث أرقام المتابعين تلقائياً.
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {BRANCHES.map(b => {
+                const config = socialConfigs[b.id] || { fb: "", insta: "", tiktok: "" };
+                return (
+                  <div key={b.id} style={{
+                    background: G.panel, border: `1px solid ${G.border}`,
+                    borderRadius: 16, padding: "18px",
+                    borderRight: `4px solid ${b.color}`
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                      <span style={{ fontSize: 22 }}>{b.icon}</span>
+                      <span className="h3" style={{ fontSize: 16, color: b.color, margin: 0 }}>فرع {getBranchName(b.id)}</span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 14 }}>
+                      <div>
+                        <div className="caption" style={{ marginBottom: 4, fontWeight: 700 }}>🔵 فيسبوك (رابط أو معرف)</div>
+                        <input
+                          value={config.fb}
+                          onChange={e => handleSocialChange(b.id, "fb", e.target.value)}
+                          placeholder="مثال: PapetrieelSoltane"
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <div className="caption" style={{ marginBottom: 4, fontWeight: 700 }}>📸 إنستغرام (رابط أو معرف)</div>
+                        <input
+                          value={config.insta}
+                          onChange={e => handleSocialChange(b.id, "insta", e.target.value)}
+                          placeholder="مثال: soultan_stationery"
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <div className="caption" style={{ marginBottom: 4, fontWeight: 700 }}>🖤 تيك توك (رابط أو معرف)</div>
+                        <input
+                          value={config.tiktok}
+                          onChange={e => handleSocialChange(b.id, "tiktok", e.target.value)}
+                          placeholder="مثال: soultan_stationery"
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button
+                        onClick={() => saveSocialConfig(b.id)}
+                        disabled={loadingSocial}
+                        style={{
+                          background: `${b.color}15`, color: b.color,
+                          border: `1px solid ${b.color}33`, borderRadius: 10,
+                          padding: "8px 20px", fontSize: 12, fontWeight: 900,
+                          cursor: "pointer", fontFamily: "'ThmanyahText', sans-serif"
+                        }}
+                      >حفظ إعدادات الفرع</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>

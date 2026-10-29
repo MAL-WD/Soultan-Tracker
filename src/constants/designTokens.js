@@ -101,6 +101,30 @@ export const B2B_TASKS_DEFAULT = [
   { id: "b10", label: "متابعة الطلبات",             done: false, cat: "مبيعات" },
 ];
 
+export const TARGET_AUDIENCES = [
+  { id: "parents",     label: "الأولياء",                icon: "👨‍👩‍👧‍👦", color: "#4CAF50" },
+  { id: "graduates",   label: "خريجو جامعات",           icon: "🎓",     color: "#9C27B0" },
+  { id: "bem",         label: "طلاب BEM",               icon: "📘",     color: "#2196F3" },
+  { id: "bac",         label: "طلاب BAC",               icon: "📗",     color: "#00BCD4" },
+  { id: "weddings",    label: "أعراس",                   icon: "💍",     color: "#E91E63" },
+  { id: "artists",     label: "الفنانين",                icon: "🎨",     color: "#FF9800" },
+  { id: "readers",     label: "المطالعين",               icon: "📚",     color: "#795548" },
+  { id: "businesses",  label: "إدارات ومؤسسات وشركات",  icon: "🏢",     color: "#607D8B" },
+  { id: "quran",       label: "طلبة المدارس القرآنية",   icon: "🕌",     color: "#4DB6AC" },
+];
+
+export const PRODUCTS = [
+  { id: "edu_toys",       label: "ألعاب تعليمية لتنمية ذكاء الأطفال",  icon: "🧩", audiences: ["parents"]                },
+  { id: "fun_toys",       label: "ألعاب ترفيهية",                       icon: "🎮", audiences: ["parents"]                },
+  { id: "grad_gifts",     label: "هدايا للخريجين والطلبة المتفوقين",   icon: "🎁", audiences: ["graduates", "bem", "bac"] },
+  { id: "adult_gifts",    label: "هدايا للكبار",                        icon: "🎀", audiences: ["graduates", "weddings"]   },
+  { id: "wedding_gifts",  label: "هدايا أعراس",                        icon: "💐", audiences: ["weddings"]               },
+  { id: "religious_books", label: "كتب دينية",                          icon: "📖", audiences: ["quran"]                  },
+  { id: "novels",          label: "روايات للمطالعين في الصيف",          icon: "📕", audiences: ["readers"]                },
+  { id: "art_supplies",    label: "أدوات فنية للمبتدئين والمحترفين",   icon: "🖌️", audiences: ["artists"]                },
+  { id: "office_supplies", label: "أدوات مكتبية احترافية",              icon: "🗂️", audiences: ["businesses"]             },
+];
+
 export const MONTHS_PLAN_DEFAULT = {
   goals: {
     followers:  "",
@@ -128,7 +152,16 @@ export const MONTHS_PLAN_DEFAULT = {
     desire:    "",
     action:    "",
   },
+  // ── NEW: Sales Targets ──
+  salesTargets: {},    // { [productId]: { target: "", actual: "" } }
+  // ── NEW: Audience Priority (% focus this month) ──
+  audiencePriority: {}, // { [audienceId]: "" }  (percentage string)
+  // ── NEW: Audience Notes ──
+  audienceNotes: {},    // { [audienceId]: "" }
+  // ── NEW: Post-Audience Mapping per day ──
+  postAudienceMap: {},  // { [dayEn]: [audienceId, ...] }
 };
 
 export const STORIES_COUNT = 6;
 export const CONTENT_TYPES_MONTH = ["فيديو","كراوسل","صورة","ريل","ستوري","بث مباشر","UGC","B2B"];
+

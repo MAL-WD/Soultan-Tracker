@@ -51,7 +51,7 @@ export default function PremiumDashboard({ data, branchNames, activities }) {
         const dTasks = dTypes.flatMap(t => (SM_TASKS_BY_TYPE[t] || []).map(x => ({ key: `${t}_${x.id}` })));
         
         const dDone = dTasks.filter(t => dd.tasks?.[t.key]).length + (dd.stories || []).filter(Boolean).length;
-        const dTotal = dTasks.length + (d.en === "FRI" ? 0 : STORIES_COUNT);
+        const dTotal = dTasks.length + STORIES_COUNT;
         
         return dTotal > 0 ? Math.round((dDone / dTotal) * 100) : 0;
       });

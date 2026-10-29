@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { G, BRANCHES, DAYS, SM_TASKS_BY_TYPE, DAY_CONTENT_TYPES, B2B_TASKS_DEFAULT, MONTHS_PLAN_DEFAULT, STORIES_COUNT, CONTENT_TYPES_MONTH } from "./constants/designTokens";
+import { G, BRANCHES, DAYS, SM_TASKS_BY_TYPE, DAY_CONTENT_TYPES, B2B_TASKS_DEFAULT, MONTHS_PLAN_DEFAULT, STORIES_COUNT, CONTENT_TYPES_MONTH, TARGET_AUDIENCES, PRODUCTS } from "./constants/designTokens";
 import PremiumDashboard from "./Dashboard";
 import Login from "./components/Login";
 import TasksPanel from "./components/TasksPanel";
@@ -7,6 +7,7 @@ import VisualPanel from "./components/VisualPanel";
 import MonthPanel from "./components/MonthPanel";
 import B2BPanel from "./components/B2BPanel";
 import AdminPanel from "./components/AdminPanel";
+import ContentPlanningPanel from "./components/ContentPlanningPanel";
 import {
   generateTasksReport,
   generateVisualReport,
@@ -127,6 +128,22 @@ const mergeMonthPlan = (loaded) => {
     funnel: {
       ...MONTHS_PLAN_DEFAULT.funnel,
       ...(loaded.funnel || {})
+    },
+    salesTargets: {
+      ...MONTHS_PLAN_DEFAULT.salesTargets,
+      ...(loaded.salesTargets || {})
+    },
+    audiencePriority: {
+      ...MONTHS_PLAN_DEFAULT.audiencePriority,
+      ...(loaded.audiencePriority || {})
+    },
+    audienceNotes: {
+      ...MONTHS_PLAN_DEFAULT.audienceNotes,
+      ...(loaded.audienceNotes || {})
+    },
+    postAudienceMap: {
+      ...MONTHS_PLAN_DEFAULT.postAudienceMap,
+      ...(loaded.postAudienceMap || {})
     }
   };
 };
@@ -195,6 +212,7 @@ export default function SoultanProV5() {
     photo: { name: "صورة", icon: "🖼️", color: G.accentBid }
   });
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [followersHistory, setFollowersHistory] = useState({});
   const wk = getWk();
 
   const enablePushNotifications = async () => {
@@ -255,7 +273,7 @@ export default function SoultanProV5() {
   // DATA PERSISTENCE
   // ============================================
 
-  const sv = async (d, m, b, bn, act, com) => {
+  const sv = async (d, m, b, bn, act, com, fh) => {
     setSaving(true);
     try {
       if (d   !== undefined) await cloudStorage.set(wk,          JSON.stringify(d));
@@ -264,8 +282,74 @@ export default function SoultanProV5() {
       if (bn  !== undefined) await cloudStorage.set("bn5",        JSON.stringify(bn));
       if (act !== undefined) await cloudStorage.set(`${wk}-act`, JSON.stringify(act));
       if (com !== undefined) await cloudStorage.set(`${wk}-com`, JSON.stringify(com));
+      if (fh  !== undefined) await cloudStorage.set("followers-history", JSON.stringify(fh));
     } catch {}
     setTimeout(() => setSaving(false), 300);
+  };
+
+  const updateFollowers = (monthId, branchId, platform, value) => {
+    const updated = {
+      ...followersHistory,
+      [monthId]: {
+        ...(followersHistory[monthId] || {}),
+        [branchId]: {
+          ...((followersHistory[monthId]?.[branchId]) || { fb: "", insta: "", tiktok: "" }),
+          [platform]: value
+        }
+      }
+    };
+    setFollowersHistory(updated);
+    sv(undefined, undefined, undefined, undefined, undefined, undefined, updated);
+  };
+
+  const syncSocialFollowers = async (force = false) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_URL}/social/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token
+        },
+        body: JSON.stringify({ force })
+      });
+      const d = await res.json();
+      if (d.success && d.data) {
+        const currentMonthId = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+        
+        setFollowersHistory(prev => {
+          const updated = { ...prev };
+          if (!updated[currentMonthId]) updated[currentMonthId] = {};
+          
+          let changed = false;
+          
+          Object.keys(d.data).forEach(branchId => {
+            if (!updated[currentMonthId][branchId]) updated[currentMonthId][branchId] = { fb: "", insta: "", tiktok: "" };
+            
+            const branchSync = d.data[branchId];
+            const platforms = ["fb", "insta", "tiktok"];
+            
+            platforms.forEach(p => {
+              if (branchSync[p] !== null && branchSync[p] !== undefined) {
+                const newVal = String(branchSync[p]);
+                if (updated[currentMonthId][branchId][p] !== newVal) {
+                  updated[currentMonthId][branchId][p] = newVal;
+                  changed = true;
+                }
+              }
+            });
+          });
+          
+          if (changed) {
+            sv(undefined, undefined, undefined, undefined, undefined, undefined, updated);
+            return updated;
+          }
+          return prev;
+        });
+      }
+    } catch (e) {
+      console.error("Failed to sync social followers:", e);
+    }
   };
 
   // Activity Logger
@@ -319,6 +403,7 @@ export default function SoultanProV5() {
         const bn = await cloudStorage.get("bn5");        if (bn?.value) setBranchNames(JSON.parse(bn.value));
         const ac = await cloudStorage.get(`${wk}-act`); if (ac?.value) setActivities(JSON.parse(ac.value));
         const cm = await cloudStorage.get(`${wk}-com`); if (cm?.value) setComments(JSON.parse(cm.value));
+        const fh = await cloudStorage.get("followers-history"); if (fh?.value) setFollowersHistory(JSON.parse(fh.value));
       } catch {}
 
       // Load dynamic global constants with fallback
@@ -350,6 +435,9 @@ export default function SoultanProV5() {
 
       setLoaded(true);
       setTimeout(() => setAnimate(true), 80);
+      
+      // Trigger background social sync
+      syncSocialFollowers(false);
     })();
   }, [currentUser]);
 
@@ -454,7 +542,7 @@ export default function SoultanProV5() {
     const dd    = data[bid]?.[den] || {};
     const dTypes = dayContentTypes[den] || [];
     const all   = dTypes.flatMap(t => (smTasksByType[t] || []).map(x => ({ key: `${t}_${x.id}` })));
-    const hasStories = den !== "FRI";
+    const hasStories = true;
     const done  = all.filter(t => dd.tasks?.[t.key]).length + (hasStories ? (dd.stories || []).filter(Boolean).length : 0);
     const total = all.length + (hasStories ? STORIES_COUNT : 0);
     return total > 0 ? Math.round((done / total) * 100) : 0;
@@ -475,7 +563,7 @@ export default function SoultanProV5() {
     BRANCHES.filter(b => currentUser?.role === 'admin' || b.id === currentUser?.branchId).forEach(b => {
       const dd = data[b.id]?.[today] || {};
       const sc = (dd.stories || []).filter(Boolean).length;
-      if (today !== "FRI" && sc < STORIES_COUNT) {
+      if (sc < STORIES_COUNT) {
         alerts.push({ id: `s-${b.id}`, text: `فرع ${branchNames[b.id]}: لم يكتمل الستوريز (${sc}/${STORIES_COUNT})`, type: "warn" });
       }
       if (!dd.published) {
@@ -497,6 +585,7 @@ export default function SoultanProV5() {
     { id: "tasks",     label: "📋 المهام" },
     { id: "visual",    label: "🎨 الهوية" },
     { id: "month",     label: "📆 الشهر" },
+    { id: "planning",  label: "📅 تخطيط المحتوى" },
     { id: "b2b",       label: "🏢 B2B" },
     { id: "activity",  label: "📜 النشاط" },
     { id: "dashboard", label: "📊 التحليلات" },
@@ -698,7 +787,7 @@ export default function SoultanProV5() {
               return (
                 <button
                   key={b.id}
-                  onClick={() => { setBranch(b.id); if (!["month","b2b","admin"].includes(panel)) setPanel("tasks"); }}
+                  onClick={() => { setBranch(b.id); if (!["month","b2b","admin","planning"].includes(panel)) setPanel("tasks"); }}
                   style={{
                     flex: "1 1 100px", minWidth: 120, padding: "14px 10px", borderRadius: 16, cursor: "pointer",
                     border: `1px solid ${isA ? b.color : G.border}`,
@@ -735,7 +824,7 @@ export default function SoultanProV5() {
           </div>
 
           {/* ═══════════════ DAY STRIP ═══════════════ */}
-          {!["month", "b2b", "admin"].includes(panel) && (
+          {!["month", "b2b", "admin", "planning"].includes(panel) && (
             <div style={{ padding: "14px 16px", display: "flex", gap: 8, overflowX: "auto" }}>
               {DAYS.map(d => {
                 const isA = d.en === day;
@@ -835,6 +924,7 @@ export default function SoultanProV5() {
                 comments={comments}
                 addComment={addComment}
                 contentTypeMetadata={contentTypeMetadata}
+                monthPlan={monthPlan}
               />
             </>
           )}
@@ -883,8 +973,22 @@ export default function SoultanProV5() {
                 toggleWeekCT={toggleWeekCT}
                 setMonthPlan={setMonthPlan}
                 sv={sv}
+                currentUser={currentUser}
+                days={DAYS}
+                data={data}
+                branch={branch}
+                followersHistory={followersHistory}
+                updateFollowers={updateFollowers}
+                syncSocialFollowers={syncSocialFollowers}
               />
             </>
+          )}
+
+          {panel === "planning" && (
+            <ContentPlanningPanel
+              apiUrl={API_URL}
+              currentUser={currentUser}
+            />
           )}
 
           {panel === "b2b" && (

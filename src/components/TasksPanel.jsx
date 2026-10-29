@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { G, DAYS, SM_TASKS_BY_TYPE as DEFAULT_SM_TASKS, STORIES_COUNT } from "../constants/designTokens";
+import { G, DAYS, SM_TASKS_BY_TYPE as DEFAULT_SM_TASKS, STORIES_COUNT, TARGET_AUDIENCES } from "../constants/designTokens";
 
 function Ring({ pct, color, size = 44, stroke = 3 }) {
   const r    = (size - stroke * 2) / 2;
@@ -62,7 +62,8 @@ export default function TasksPanel({
   setNote,
   comments,
   addComment,
-  contentTypeMetadata = {}
+  contentTypeMetadata = {},
+  monthPlan
 }) {
   const curData = data[branch]?.[day] || {};
   const allTasks = types.flatMap(type => (smTasksByType[type] || []).map(t => ({ ...t, key: `${type}_${t.id}`, type })));
@@ -70,10 +71,13 @@ export default function TasksPanel({
   const filteredTasks = catFilter === "all" ? allTasks : allTasks.filter(t => t.cat === catFilter);
   const dayDone = allTasks.filter(t => curData.tasks?.[t.key]).length;
   
-  // Dynamically calculate actual day denominator (Fridays do not have stories)
-  const hasStories = day !== "FRI";
+  // All days now have stories
+  const hasStories = true;
   const dayTotal = allTasks.length + (hasStories ? STORIES_COUNT : 0);
   const dayPct = dayTotal > 0 ? Math.round(((dayDone + (hasStories ? (curData.stories || []).filter(Boolean).length : 0)) / dayTotal) * 100) : 0;
+
+  const selectedAudIds = monthPlan?.postAudienceMap?.[day] || [];
+  const selectedAuds = TARGET_AUDIENCES.filter(a => selectedAudIds.includes(a.id));
 
   return (
     <div className="fade-up" style={{ padding: "0 18px 30px" }}>
@@ -115,6 +119,20 @@ export default function TasksPanel({
               <div className="h2" style={{ margin: 0, fontSize: "clamp(16px, 4vw, 20px)", fontWeight: 900, color: G.text, textShadow: "0 2px 4px rgba(0,0,0,0.5)" }}>
                 {types.map(t => contentTypeMetadata[t]?.name || t).join(" + ")}
               </div>
+              {selectedAuds.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                  {selectedAuds.map(a => (
+                    <span key={a.id} style={{
+                      background: `${a.color}15`, color: a.color, 
+                      padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 900,
+                      border: `1px solid ${a.color}33`, display: "flex", alignItems: "center", gap: 6,
+                      boxShadow: `0 2px 8px ${a.color}22`
+                    }}>
+                      {a.icon} {a.label}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div style={{
