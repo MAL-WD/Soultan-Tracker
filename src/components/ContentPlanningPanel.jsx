@@ -559,6 +559,25 @@ function VariableView({ kind, items, onAdd, onDelete, monthLabel }) {
 
 function PipelineView({ videos, onUpdateVideo, onOpenDetail }) {
   const columns = Object.entries(STATUS_MAP);
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverColumn, setDragOverColumn] = useState(null);
+
+  const handleCardDragStart = (e, video) => {
+    e.dataTransfer.setData('text/plain', video.id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedId(video.id);
+  };
+
+  const handleColumnDrop = (e, targetStatus) => {
+    e.preventDefault();
+    setDragOverColumn(null);
+    const videoId = e.dataTransfer.getData('text/plain') || draggedId;
+    if (!videoId) return;
+    const video = videos.find(v => v.id === videoId);
+    if (!video || (video.status || 'idea') === targetStatus) return;
+    onUpdateVideo({ ...video, status: targetStatus });
+    setDraggedId(null);
+  };
 
   return (
     <div style={{ flex: 1, padding: '24px 32px', overflowY: 'auto', direction: 'rtl' }}>
@@ -566,7 +585,7 @@ function PipelineView({ videos, onUpdateVideo, onOpenDetail }) {
         <div>
           <h1 style={{ margin: 0, fontSize: 24, color: G.gold }}>مسار إنتاج الفيديوهات</h1>
           <div style={{ fontSize: 12, color: G.textMuted, marginTop: 4 }}>
-            متابعة انتقال الأفكار عبر مختلف مراحل الإنتاج من الفكرة حتى تقييم النتائج
+            متابعة انتقال الأفكار عبر مختلف مراحل الإنتاج من الفكرة حتى تقييم النتائج (يمكنك سحب وإفلات الأفكار بين المراحل)
           </div>
         </div>
       </div>
@@ -581,18 +600,39 @@ function PipelineView({ videos, onUpdateVideo, onOpenDetail }) {
       }}>
         {columns.map(([statusKey, statusVal]) => {
           const statusVideos = videos.filter(v => (v.status || 'idea') === statusKey);
+          const isOver = dragOverColumn === statusKey;
 
           return (
-            <div key={statusKey} style={{
-              background: G.panel,
-              border: `1px solid ${G.border}`,
-              borderRadius: 12,
-              padding: 12,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-              minHeight: 300
-            }}>
+            <div
+              key={statusKey}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (dragOverColumn !== statusKey) setDragOverColumn(statusKey);
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                setDragOverColumn(statusKey);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget) && dragOverColumn === statusKey) {
+                  setDragOverColumn(null);
+                }
+              }}
+              onDrop={(e) => handleColumnDrop(e, statusKey)}
+              style={{
+                background: isOver ? `${statusVal.color}18` : G.panel,
+                border: `1px solid ${isOver ? statusVal.color : G.border}`,
+                borderRadius: 12,
+                padding: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                minHeight: 300,
+                transition: 'all 0.15s',
+                boxShadow: isOver ? `0 0 12px ${statusVal.color}33` : 'none'
+              }}
+            >
               <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 paddingBottom: 8, borderBottom: `2px solid ${statusVal.color}`
@@ -605,30 +645,57 @@ function PipelineView({ videos, onUpdateVideo, onOpenDetail }) {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {statusVideos.map(v => (
-                  <div
-                    key={v.id}
-                    onClick={() => onOpenDetail(v)}
-                    style={{
-                      background: G.card,
-                      border: `1px solid ${G.border}`,
-                      borderRadius: 8,
-                      padding: 10,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
-                    }}
-                  >
-                    <b style={{ fontSize: 12, color: G.text, lineHeight: 1.4 }}>{v.title}</b>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10 }}>
-                      <span style={{ color: G.gold }}>{v.productCategory || 'بدون فئة'}</span>
-                      <span style={{ color: G.textMuted }}>يوم {v.scheduledDate || '—'}</span>
+                {statusVideos.map(v => {
+                  const isCardDragging = draggedId === v.id;
+                  return (
+                    <div
+                      key={v.id}
+                      draggable={true}
+                      onDragStart={(e) => handleCardDragStart(e, v)}
+                      onDragEnd={() => { setDraggedId(null); setDragOverColumn(null); }}
+                      onClick={() => onOpenDetail(v)}
+                      style={{
+                        background: G.card,
+                        border: `1px solid ${G.border}`,
+                        borderRadius: 8,
+                        padding: 10,
+                        cursor: isCardDragging ? 'grabbing' : 'grab',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                        boxShadow: isCardDragging ? '0 6px 16px rgba(0,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.2)',
+                        opacity: isCardDragging ? 0.4 : 1,
+                        transform: isCardDragging ? 'scale(0.97)' : 'none',
+                        transition: 'opacity 0.15s, transform 0.15s'
+                      }}
+                      title="اضغط للتفاصيل أو اسحب لتغيير المرحلة"
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+                        <b style={{ fontSize: 12, color: G.text, lineHeight: 1.4, flex: 1 }}>{v.title}</b>
+                        <span style={{ color: G.textMuted, fontSize: 12, opacity: 0.5, cursor: 'grab' }}>⋮⋮</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10 }}>
+                        <span style={{ color: G.gold }}>{v.productCategory || 'بدون فئة'}</span>
+                        <span style={{ color: G.textMuted }}>يوم {v.scheduledDate || '—'}</span>
+                      </div>
                     </div>
+                  );
+                })}
+                {isOver && (
+                  <div style={{
+                    border: `1px dashed ${statusVal.color}`,
+                    borderRadius: 8,
+                    padding: 8,
+                    textAlign: 'center',
+                    color: statusVal.color,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: `${statusVal.color}15`
+                  }}>
+                    إفلات الفكرة هنا
                   </div>
-                ))}
-                {statusVideos.length === 0 && (
+                )}
+                {statusVideos.length === 0 && !isOver && (
                   <div style={{ fontSize: 11, color: G.textDim, textAlign: 'center', padding: '20px 0' }}>
                     فارغ
                   </div>
@@ -646,21 +713,63 @@ function PipelineView({ videos, onUpdateVideo, onOpenDetail }) {
 // VIDEO CARD
 // ============================================
 
-function VideoCard({ video, dimmed, onClick }) {
+function VideoCard({ video, dimmed, isDragging, onDragStart, onDragEnd, onClick }) {
   const st = STATUS_MAP[video.status] || STATUS_MAP.idea;
   const isBad = !video.productCategory || !video.hasGoal;
 
   return (
-    <button onClick={onClick} style={{
-      background: G.card, border: `1px solid ${isBad ? G.red : G.border}`,
-      borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
-      cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', textAlign: 'right',
-      fontFamily: "'ThmanyahText', 'Cairo', sans-serif", color: G.text, width: '100%',
-      opacity: dimmed ? 0.25 : 1, transition: 'all 0.15s'
-    }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, fontWeight: 600, lineHeight: 1.45 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 6, flexShrink: 0, background: st.color }} />
-        <span>{video.title}</span>
+    <div
+      role="button"
+      tabIndex={0}
+      draggable={true}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
+      title="اضغط لتعديل الفكرة، أو اسحبها لإعادة جدولتها في يوم آخر"
+      style={{
+        background: G.card,
+        border: `1px solid ${isBad ? G.red : G.border}`,
+        borderRadius: 8,
+        padding: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        cursor: isDragging ? 'grabbing' : 'grab',
+        boxShadow: isDragging ? '0 8px 24px rgba(0,0,0,0.5)' : '0 1px 3px rgba(0,0,0,0.06)',
+        textAlign: 'right',
+        fontFamily: "'ThmanyahText', 'Cairo', sans-serif",
+        color: G.text,
+        width: '100%',
+        boxSizing: 'border-box',
+        opacity: isDragging ? 0.35 : (dimmed ? 0.25 : 1),
+        transform: isDragging ? 'scale(0.96)' : 'none',
+        transition: 'opacity 0.15s, transform 0.15s, border-color 0.15s',
+        userSelect: 'none'
+      }}
+    >
+      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, fontWeight: 600, lineHeight: 1.45, flex: 1 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 5, flexShrink: 0, background: st.color }} />
+          <span style={{ wordBreak: 'break-word' }}>{video.title}</span>
+        </div>
+        <span
+          style={{
+            color: G.textMuted,
+            fontSize: 13,
+            lineHeight: 1,
+            opacity: 0.5,
+            padding: '2px 0 0 2px',
+            flexShrink: 0,
+            cursor: 'grab'
+          }}
+          title="اسحب لنقل اليوم"
+        >⋮⋮</span>
       </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         <span style={{
@@ -682,7 +791,7 @@ function VideoCard({ video, dimmed, onClick }) {
           {!video.hasGoal ? 'ناقص: بلا هدف' : st.label}
         </span>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -700,6 +809,16 @@ function PlanView({
   const [addDay, setAddDay] = useState(null);
   const [newVideo, setNewVideo] = useState({});
   const [viewMode, setViewMode] = useState('monthly'); // 'monthly' | 'weekly' | 'daily'
+  const [draggedVideoId, setDraggedVideoId] = useState(null);
+  const [dragOverDay, setDragOverDay] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const monthLabel = `${MONTH_NAMES[month]} ${year}`;
 
@@ -722,6 +841,37 @@ function PlanView({
     });
     return map;
   }, [videos]);
+
+  // Drag and drop handlers
+  const handleDragStart = (e, video) => {
+    e.dataTransfer.setData('text/plain', video.id);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedVideoId(video.id);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedVideoId(null);
+    setDragOverDay(null);
+  };
+
+  const handleDropOnDay = (videoId, targetDay) => {
+    const vid = videoId || draggedVideoId;
+    if (!vid || !targetDay) return;
+    const video = videos.find(v => v.id === vid);
+    if (!video) return;
+    if (Number(video.scheduledDate) === Number(targetDay)) return;
+
+    const oldDay = video.scheduledDate;
+    const updated = { ...video, scheduledDate: Number(targetDay) };
+    onUpdateVideo(updated);
+
+    setToast({
+      msg: `تم نقل "${video.title}" من يوم ${oldDay || 'غير محدد'} إلى يوم ${targetDay} ${MONTH_NAMES[month]}`,
+      undo: () => onUpdateVideo({ ...video, scheduledDate: oldDay })
+    });
+    setDraggedVideoId(null);
+    setDragOverDay(null);
+  };
 
   // Filter matching
   const matchFilter = useCallback((v) => {
@@ -997,15 +1147,52 @@ function PlanView({
 
                 const isBusy = day.inMonth && day.dayVideos.length >= 3;
                 const isEmpty = day.inMonth && day.dayVideos.length === 0;
+                const isDragTarget = day.inMonth && dragOverDay === day.dayNum;
 
                 return (
-                  <div key={`d-${wi}-${di}`} style={{
-                    background: day.inMonth ? G.card : G.panel,
-                    padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
-                    minHeight: 250,
-                    outline: day.isToday ? `2px solid ${G.gold}` : 'none',
-                    outlineOffset: day.isToday ? -2 : 0
-                  }}>
+                  <div
+                    key={`d-${wi}-${di}`}
+                    onDragOver={(e) => {
+                      if (day.inMonth) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverDay !== day.dayNum) {
+                          setDragOverDay(day.dayNum);
+                        }
+                      }
+                    }}
+                    onDragEnter={(e) => {
+                      if (day.inMonth) {
+                        e.preventDefault();
+                        setDragOverDay(day.dayNum);
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget) && dragOverDay === day.dayNum) {
+                        setDragOverDay(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      if (day.inMonth) {
+                        e.preventDefault();
+                        setDragOverDay(null);
+                        const vid = e.dataTransfer.getData('text/plain') || draggedVideoId;
+                        handleDropOnDay(vid, day.dayNum);
+                      }
+                    }}
+                    style={{
+                      background: isDragTarget ? `${G.gold}18` : (day.inMonth ? G.card : G.panel),
+                      padding: 8, display: 'flex', flexDirection: 'column', gap: 6,
+                      minHeight: 250,
+                      outline: isDragTarget
+                        ? `2px dashed ${G.gold}`
+                        : (day.isToday ? `2px solid ${G.gold}` : 'none'),
+                      outlineOffset: -2,
+                      boxShadow: isDragTarget ? `inset 0 0 16px ${G.gold}22` : 'none',
+                      transition: 'background 0.15s, outline-color 0.15s, box-shadow 0.15s',
+                      position: 'relative'
+                    }}
+                  >
                     {/* Day Header */}
                     <div style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -1033,8 +1220,29 @@ function PlanView({
                       )}
                     </div>
 
+                    {/* Drag & Drop Target Indicator */}
+                    {isDragTarget && (
+                      <div style={{
+                        border: `1px dashed ${G.gold}`,
+                        borderRadius: 8,
+                        padding: '10px 8px',
+                        background: `${G.gold}20`,
+                        color: G.gold,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textAlign: 'center',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6
+                      }}>
+                        <span>📥</span>
+                        <span>إفلات الفكرة في يوم {day.dayNum}</span>
+                      </div>
+                    )}
+
                     {/* Add button for empty days */}
-                    {day.inMonth && day.dayVideos.length === 0 && (
+                    {day.inMonth && day.dayVideos.length === 0 && !isDragTarget && (
                       <button onClick={() => openAddPanel(day.dayNum)} style={{
                         border: `1px dashed ${G.border}`, borderRadius: 8, height: 64,
                         display: 'grid', placeItems: 'center', fontSize: 11, color: G.textMuted,
@@ -1044,17 +1252,19 @@ function PlanView({
                     )}
 
                     {/* Video cards */}
-                    {day.dayVideos.slice(0, 2).map(v => (
-                      <VideoCard key={v.id} video={v} dimmed={!matchFilter(v)} onClick={() => openVideoDetail(v)} />
-                    ))}
-                    {day.dayVideos.length > 2 && (
-                      <span
-                        onClick={() => openVideoDetail(day.dayVideos[2])}
-                        style={{ fontSize: 11, fontWeight: 600, color: G.gold, cursor: 'pointer', textAlign: 'center' }}
-                      >
-                        + {day.dayVideos.length - 2} فكرة أخرى
-                      </span>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto', maxHeight: 290 }}>
+                      {day.dayVideos.map(v => (
+                        <VideoCard
+                          key={v.id}
+                          video={v}
+                          dimmed={!matchFilter(v)}
+                          isDragging={draggedVideoId === v.id}
+                          onDragStart={(e) => handleDragStart(e, v)}
+                          onDragEnd={handleDragEnd}
+                          onClick={() => openVideoDetail(v)}
+                        />
+                      ))}
+                    </div>
                   </div>
                 );
               })}
@@ -1283,6 +1493,63 @@ function PlanView({
           fontFamily: "'ThmanyahText', 'Cairo', sans-serif", marginTop: 8
         }}>إضافة الفكرة</button>
       </SidePanel>
+
+      {/* Floating Toast Notification with Undo */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 28,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#0B1710',
+          border: `1px solid ${G.gold}`,
+          borderRadius: 12,
+          padding: '12px 20px',
+          color: G.text,
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          fontFamily: "'ThmanyahText', 'Cairo', sans-serif",
+          fontSize: 13,
+          animation: 'fadeIn 0.2s ease-out'
+        }}>
+          <span style={{ color: G.gold, fontSize: 16 }}>✓</span>
+          <span>{toast.msg}</span>
+          {toast.undo && (
+            <button
+              onClick={() => {
+                toast.undo();
+                setToast(null);
+              }}
+              style={{
+                background: `${G.gold}25`,
+                border: `1px solid ${G.gold}66`,
+                color: G.gold,
+                padding: '4px 10px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 700,
+                fontFamily: "'ThmanyahText', 'Cairo', sans-serif"
+              }}
+            >تراجع</button>
+          )}
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: G.textMuted,
+              cursor: 'pointer',
+              fontSize: 16,
+              padding: 0,
+              lineHeight: 1
+            }}
+          >×</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1404,6 +1671,8 @@ export default function ContentPlanningPanel({ apiUrl, currentUser }) {
   };
 
   const updateVideo = async (video) => {
+    // Optimistic update for instant UI response (0ms drag-and-drop latency)
+    setVideos(prev => prev.map(v => v.id === video.id ? { ...v, ...video } : v));
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${apiUrl}/content-plan/${monthKey}/video/${video.id}`, {
@@ -1412,8 +1681,8 @@ export default function ContentPlanningPanel({ apiUrl, currentUser }) {
         body: JSON.stringify(video)
       });
       const data = await res.json();
-      if (data.success) {
-        setVideos(data.data.videos || []);
+      if (data.success && data.data?.videos) {
+        setVideos(data.data.videos);
       }
     } catch (e) {
       console.error('Failed to update video:', e);
