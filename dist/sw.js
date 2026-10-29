@@ -1,4 +1,4 @@
-const CACHE_NAME = 'soltan-tracker-v2';
+const CACHE_NAME = 'soltan-tracker-v3';
 
 // Only pre-cache the HTML shell – everything else is cached on fetch
 const PRECACHE_URLS = [
